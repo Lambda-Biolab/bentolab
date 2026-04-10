@@ -7,20 +7,12 @@ __pycache__/
 dist/
 build/
 
-# Captures (large binary files)
-captures/**/*.pcap
-captures/**/*.pcapng
-captures/**/*.btsnoop
-
-# Firmware binaries
-firmware/*.bin
-firmware/*.hex
-firmware/*.elf
-firmware/*.img
-
-# APK files and decompiled output
-*.apk
+# RE artifacts (removed from tree, kept in git history)
+apk/
 apk_decompiled/
+captures/
+firmware/
+scripts/
 
 # Environment and secrets
 .env

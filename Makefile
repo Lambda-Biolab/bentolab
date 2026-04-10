@@ -1,4 +1,4 @@
-.PHONY: setup lint format test scan-ble scan-wifi apk-extract clean help
+.PHONY: setup lint format test scan-ble scan-wifi commander monitor-ble clean help
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
@@ -28,9 +28,6 @@ scan-ble: ## Scan for BLE devices (10s)
 
 scan-wifi: ## Scan local network for Bento Lab Wi-Fi unit
 	$(PYTHON) tools/wifi_scanner.py
-
-apk-extract: ## Extract protocol info from decompiled APK
-	$(PYTHON) tools/apk_strings.py --apk-dir apk_decompiled/
 
 commander: ## Launch interactive BLE commander
 	$(PYTHON) tools/ble_commander.py

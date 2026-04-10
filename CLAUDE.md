@@ -1,4 +1,4 @@
-# Bento Lab Reverse Engineering Project
+# Bento Lab Control Library
 
 ## Environment
 - Python 3.13 via Homebrew, venv at `.venv/`
@@ -8,33 +8,31 @@
 - Lint: `make lint` / Format: `make format`
 
 ## Architecture
-- `tools/` — Standalone reverse engineering scripts (run directly: `python tools/ble_scanner.py`)
-- `bentolab/` — Reusable Python library for controlling Bento Lab units
-- `docs/` — Reverse engineering findings (populated as we discover the protocol)
-- `captures/` — Raw data captures (JSON committed, pcap/pcapng gitignored)
-- `firmware/` — Firmware binaries (gitignored)
+- `bentolab/` — Python library for controlling Bento Lab units
+- `tools/` — Standalone scripts for device discovery, monitoring, and debugging
+- `docs/` — Protocol documentation and reverse engineering findings
+- `tests/` — Test suite
 
 ## Target Devices
 - **Unit 1 (V1.4, serial BL13489)**: BLE-controlled, primary automation target
-- **Unit 2 (V1.31, serial BL13125)**: Wi-Fi-connected, secondary/intel target
+- **Unit 2 (V1.31, serial BL13125)**: Wi-Fi-connected, protocol TBD
 
 ## Key Constraints
 - All BLE code is async (bleak library, uses asyncio)
 - macOS CoreBluetooth only exposes UUIDs, NOT GATT handle numbers
 - The official app is "Bento Bio" (Android: bio.bento.app)
-- No public API or SDK exists — everything is reverse-engineered
+- No public API or SDK exists — protocol is reverse-engineered
 
-## Discovered Protocol Information
-<!-- Updated 2026-04-10 from APK analysis (Bento Bio v0.5.4, Flutter) -->
+## Protocol Information
 
-### App Architecture
-- **Framework:** Flutter (Dart AOT compiled to libapp.so)
+### Hardware
+- **MCU:** Nordic nRF52840 (ARM Cortex-M4F)
+- **BLE Stack:** Nordic SoftDevice
+- **App Framework:** Flutter (Dart AOT compiled to libapp.so)
 - **BLE library:** flutter_blue_plus
 - **DFU library:** Nordic Semiconductor DFU (no.nordicsemi.android.dfu)
-- **MCU:** Nordic nRF (confirmed by NUS + Nordic DFU)
-- **Developer:** Philipp Boeing (file path in binary: /Users/philippboeing/bento-app/)
 
-### BLE UUIDs (from libapp.so string extraction)
+### BLE UUIDs
 - **NUS Service:** `6e400001-b5a3-f393-e0a9-e50e24dcca9e`
 - **NUS RX (write to device):** `6e400002-b5a3-f393-e0a9-e50e24dcca9e`
 - **NUS TX (notify from device):** `6e400003-b5a3-f393-e0a9-e50e24dcca9e`
@@ -43,16 +41,14 @@
 
 ### Protocol
 - Commands sent via NUS RX, responses via NUS TX notifications
-- Key functions: `processBluetoothCommand`, `processBluetoothMessage`
 - PCR profiles framed: `pcrProfileBegin` -> data -> `pcrProfileDone`
 - Data model: PcrProgram > PcrProgramCycle > PcrProgramStage (JSON)
 - Device controls: `updateCentMode`, `updateGelMode`, `sendPcrProfileToRun`
 
 ### API & Firmware URLs
 - **API base:** `https://api2.bento.bio/`
-- **Devices endpoint:** `https://api2.bento.bio/devices/`
 - **Firmware images:** `https://api2.bento.bio/static/firmware-images/`
-- **Legacy update path:** `bl-legacy-update/`
+- **Note:** Bento Lab firmware files (dfu-1.15.zip, dfu-2.2.zip) have been removed from the server. Only goPCR firmware (bg-p000-1.zip) remains available.
 
 ### Device Types
 - `DeviceBentoLab` / `DeviceBentoLabV17` — Bento Lab (our targets)
