@@ -63,6 +63,7 @@ CMD_DELETE_PROFILE = None  # TBD
 CMD_BEGIN_PROFILE = "pb"  # Begin profile upload: "0\n0\npb"
 CMD_BEGIN_STAGES = "w"  # Start stages section
 CMD_STAGE = "x"  # Define a stage: "<temp>\n<duration>\nx"
+CMD_TOUCHDOWN_STAGE = "y"  # Touchdown stage: "<temp>\n<duration>\n<delta>\n<repeats>\ny"
 CMD_CYCLE = "z"  # Define a cycle: "<from>\n<to>\n<cycles>\nz"
 CMD_LID_TEMP = "A"  # Set lid temp: "<temp>\nA"
 CMD_PROFILE_NAME = "I"  # Set name: "<name>\nI"
@@ -93,6 +94,7 @@ RESP_PROFILE_END = "t"  # t;<next_index>;;;
 # Profile data responses
 RESP_STAGES_BEGIN = "w"  # w;0;;;
 RESP_STAGE = "x"  # x;<index>;<temp>;<duration>;;;
+RESP_TOUCHDOWN_STAGE = "y"  # y;<index>;<temp>;<duration>;<delta>;<repeats>;;;
 RESP_CYCLE = "z"  # z;<index>;<from>;<to>;<cycles>[;<cycles2>];;;
 RESP_LID_TEMP = "A"  # A;<index>;<temp>;;;
 RESP_PROFILE_NAME = "C"  # C;<index>;<name>;;;
@@ -125,6 +127,18 @@ def encode_command(cmd: str) -> bytes:
 def encode_stage(temperature: float, duration: int) -> bytes:
     """Encode a PCR stage command."""
     return encode_command(f"{temperature}\n{duration}\n{CMD_STAGE}")
+
+
+def encode_touchdown_stage(temperature: float, duration: int, delta: float, repeats: int) -> bytes:
+    """Encode a touchdown PCR stage.
+
+    Args:
+        temperature: Starting annealing temperature (e.g., 68.0)
+        duration: Hold duration in seconds
+        delta: Temperature change per repeat (e.g., -1.0 for -1°C/repeat)
+        repeats: Number of touchdown repeats
+    """
+    return encode_command(f"{temperature}\n{duration}\n{delta}\n{repeats}\n{CMD_TOUCHDOWN_STAGE}")
 
 
 def encode_cycle(from_stage: int, to_stage: int, cycles: int) -> bytes:
@@ -217,6 +231,38 @@ class StageData:
 
 
 @dataclass
+class TouchdownStageData:
+    """A touchdown PCR stage from the 'y' response.
+
+    The annealing temperature starts at `temperature` and decreases by
+    `delta` each repeat for `repeats` cycles. For example:
+    y;3;68.00;20;-1.00;8 means start at 68°C, drop 1°C per repeat, 8 times.
+    """
+
+    index: int
+    temperature: float  # Starting temperature
+    duration: int
+    delta: float  # Temperature change per repeat (typically negative)
+    repeats: int  # Number of touchdown repeats
+
+    @classmethod
+    def from_message(cls, msg: str) -> TouchdownStageData:
+        """Parse a 'y;...' message.
+
+        Note: the response may be split across two BLE notifications.
+        The full format is: y;<index>;<temp>;<duration>;<delta>;<repeats>
+        """
+        parts = msg.split(";")
+        return cls(
+            index=int(parts[1]),
+            temperature=float(parts[2]),
+            duration=int(parts[3]),
+            delta=float(parts[4]),
+            repeats=int(parts[5]) if len(parts) > 5 and parts[5] else 0,
+        )
+
+
+@dataclass
 class CycleData:
     """A PCR cycle from the 'z' response."""
 
@@ -280,6 +326,8 @@ def decode_response(data: bytes) -> dict:
         return {"type": "stages_begin"}
     if prefix == RESP_STAGE:
         return {"type": "stage", "data": StageData.from_message(text)}
+    if prefix == RESP_TOUCHDOWN_STAGE:
+        return {"type": "touchdown_stage", "data": TouchdownStageData.from_message(text)}
     if prefix == RESP_CYCLE:
         return {"type": "cycle", "data": CycleData.from_message(text)}
     if prefix == RESP_LID_TEMP:

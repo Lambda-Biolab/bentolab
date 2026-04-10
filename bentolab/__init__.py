@@ -17,6 +17,7 @@ from .protocol import (
     RunStatus,
     StageData,
     StatusBroadcast,
+    TouchdownStageData,
 )
 
 __all__ = [
@@ -27,4 +28,5 @@ __all__ = [
     "RunStatus",
     "StageData",
     "StatusBroadcast",
+    "TouchdownStageData",
 ]

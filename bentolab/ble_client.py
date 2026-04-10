@@ -37,6 +37,7 @@ from .protocol import (
     RunStatus,
     StageData,
     StatusBroadcast,
+    TouchdownStageData,
     decode_response,
     encode_command,
     encode_cycle,
@@ -53,7 +54,7 @@ class ProfileData:
 
     name: str = ""
     slot: int = 0
-    stages: list[StageData] = field(default_factory=list)
+    stages: list[StageData | TouchdownStageData] = field(default_factory=list)
     cycles: list[CycleData] = field(default_factory=list)
     lid_temperature: float = 0.0
 
@@ -213,7 +214,7 @@ class BentoLabBLE:
 
         profile = ProfileData(slot=slot)
         for r in responses:
-            if r["type"] == "stage":
+            if r["type"] in ("stage", "touchdown_stage"):
                 profile.stages.append(r["data"])
             elif r["type"] == "cycle":
                 profile.cycles.append(r["data"])
