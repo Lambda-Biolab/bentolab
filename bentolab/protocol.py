@@ -163,14 +163,18 @@ class StatusBroadcast:
     def from_message(cls, msg: str) -> StatusBroadcast:
         """Parse a 'bb;...' message."""
         parts = msg.split(";")
+
+        def safe_int(s: str, default: int = 0) -> int:
+            return int(s) if s else default
+
         return cls(
-            running=int(parts[1]),
-            field2=int(parts[2]),
-            field3=int(parts[3]),
-            field4=int(parts[4]),
-            block_temperature=int(parts[5]),
-            lid_temperature=int(parts[6]),
-            field7=int(parts[7]) if len(parts) > 7 else 0,
+            running=safe_int(parts[1]),
+            field2=safe_int(parts[2]),
+            field3=safe_int(parts[3]),
+            field4=safe_int(parts[4]),
+            block_temperature=safe_int(parts[5]),
+            lid_temperature=safe_int(parts[6]),
+            field7=safe_int(parts[7]) if len(parts) > 7 else 0,
         )
 
 

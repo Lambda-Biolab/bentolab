@@ -276,17 +276,53 @@ class BentoLabBLE:
         await self._send("B")
         await self._collect_responses(timeout=3.0, expected_end="ack")
 
-    async def start_run(self) -> None:
-        """Start running the currently loaded PCR profile.
+    async def start_run(
+        self,
+        name: str = "Python Run",
+        stages: list[tuple[float, int]] | None = None,
+        cycles: list[tuple[int, int, int]] | None = None,
+        lid_temp: float = 110.0,
+        slot: int = 0,
+    ) -> None:
+        """Start a PCR run by sending the profile inline with the start command.
 
-        Upload a profile first with upload_profile(), or load one with get_profile().
+        The Bento Lab protocol requires the full profile to be sent with 'pa'.
+        If no stages are provided, sends 'pa' alone (re-runs the last profile).
+
+        Args:
+            name: Profile name
+            stages: List of (temperature_celsius, duration_seconds)
+            cycles: List of (from_stage, to_stage, num_cycles)
+            lid_temp: Lid temperature in Celsius
+            slot: Profile slot ID
         """
         await self._send("pa")
-        responses = await self._collect_responses(timeout=3.0, expected_end="ack")
-        for r in responses:
-            if r["type"] == "ack":
-                return
-        # Run may start without explicit ack
+        await asyncio.sleep(0.1)
+
+        if stages:
+            # Send stages section
+            await self._send("w")
+            await asyncio.sleep(0.1)
+
+            for temp, duration in stages:
+                await self._send_raw(encode_stage(temp, duration))
+                await asyncio.sleep(0.05)
+
+            if cycles:
+                for from_s, to_s, n_cycles in cycles:
+                    await self._send_raw(encode_cycle(from_s, to_s, n_cycles))
+                    await asyncio.sleep(0.05)
+
+            await self._send_raw(encode_lid_temp(lid_temp))
+            await asyncio.sleep(0.05)
+
+            await self._send_raw(encode_profile_name(name))
+            await asyncio.sleep(0.05)
+
+            await self._send_raw(encode_profile_slot(slot))
+            await asyncio.sleep(0.1)
+
+        await self._collect_responses(timeout=5.0, expected_end="run_status")
 
     async def poll_run_status(self) -> RunStatus:
         """Poll the current PCR run status."""
