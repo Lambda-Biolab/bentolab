@@ -6,11 +6,25 @@ Usage:
     async with BentoLabBLE() as lab:
         status = await lab.get_status()
         profiles = await lab.list_profiles()
+
+        # Run PCR with progress tracking
+        async for state in lab.run_pcr(
+            stages=[(95, 180), (95, 30), (58, 30), (72, 60), (72, 300)],
+            cycles=[(4, 2, 35)],
+        ):
+            print(f"Block: {state.block_temperature}°C")
 """
 
 __version__ = "0.1.0"
 
-from .ble_client import BentoLabBLE, ProfileData
+from .ble_client import (
+    BentoLabBLE,
+    BentoLabCommandError,
+    BentoLabConnectionError,
+    BentoLabError,
+    PCRRunState,
+    ProfileData,
+)
 from .protocol import (
     CycleData,
     ProfileEntry,
@@ -22,7 +36,11 @@ from .protocol import (
 
 __all__ = [
     "BentoLabBLE",
+    "BentoLabCommandError",
+    "BentoLabConnectionError",
+    "BentoLabError",
     "CycleData",
+    "PCRRunState",
     "ProfileData",
     "ProfileEntry",
     "RunStatus",
