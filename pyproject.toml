@@ -5,6 +5,10 @@ description = "Reverse-engineered Python control library for Bento Lab PCR works
 requires-python = ">=3.11"
 dependencies = [
     "bleak>=0.22.0",
+]
+
+[project.optional-dependencies]
+tools = [
     "rich>=13.0.0",
     "construct>=2.10.0",
     "zeroconf>=0.80.0",
@@ -13,8 +17,6 @@ dependencies = [
     "aiohttp>=3.9.0",
     "prompt-toolkit>=3.0.0",
 ]
-
-[project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
