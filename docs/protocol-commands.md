@@ -1,7 +1,7 @@
 # Protocol Command Reference
 
-**Status:** PARTIALLY DISCOVERED (APK + firmware string extraction, pending live validation)
-**Sources:** `libapp.so` (Dart AOT), `nrf52840_xxaa.bin` (firmware binary), jadx output
+**Status:** FULLY DECODED — verified live with HCI snoop capture + direct device control
+**Sources:** HCI snoop capture (193 messages), APK decompilation, firmware binary, live testing
 
 ## Architecture Overview
 
