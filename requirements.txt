@@ -1,0 +1,10 @@
+bleak>=0.22.0
+rich>=13.0.0
+construct>=2.10.0
+zeroconf>=0.80.0
+pyshark>=0.6.0
+scapy>=2.5.0
+aiohttp>=3.9.0
+prompt-toolkit>=3.0.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

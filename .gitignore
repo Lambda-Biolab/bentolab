@@ -1,0 +1,36 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Captures (large binary files)
+captures/**/*.pcap
+captures/**/*.pcapng
+captures/**/*.btsnoop
+
+# Firmware binaries
+firmware/*.bin
+firmware/*.hex
+firmware/*.elf
+firmware/*.img
+
+# APK files and decompiled output
+*.apk
+apk_decompiled/
+
+# Environment and secrets
+.env
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
