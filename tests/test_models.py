@@ -42,6 +42,53 @@ def test_pcr_profile_simple_factory():
     assert profile.final_extension.duration == 300
 
 
+def test_pcr_profile_to_stages_and_cycles_simple():
+    profile = PCRProfile.simple(
+        num_cycles=30,
+        initial_denaturation=(95.0, 180),
+        denaturation=(95.0, 30),
+        annealing=(58.0, 30),
+        extension=(72.0, 60),
+        final_extension=(72.0, 300),
+    )
+    stages, cycles = profile.to_stages_and_cycles()
+    assert stages == [
+        (95.0, 180),
+        (95.0, 30),
+        (58.0, 30),
+        (72.0, 60),
+        (72.0, 300),
+    ]
+    assert cycles == [(4, 2, 30)]
+
+
+def test_pcr_profile_to_stages_and_cycles_multi_step():
+    profile = PCRProfile(
+        name="Touchdown then amplification",
+        initial_denaturation=ThermalStep(95.0, 180),
+        cycles=[
+            CycleStep(
+                denaturation=ThermalStep(95.0, 15),
+                annealing=ThermalStep(65.0, 20),
+                extension=ThermalStep(72.0, 30),
+                repeat_count=10,
+            ),
+            CycleStep(
+                denaturation=ThermalStep(95.0, 15),
+                annealing=ThermalStep(55.0, 20),
+                extension=ThermalStep(72.0, 30),
+                repeat_count=25,
+            ),
+        ],
+        final_extension=ThermalStep(72.0, 300),
+    )
+    stages, cycles = profile.to_stages_and_cycles()
+    assert len(stages) == 1 + 3 + 3 + 1  # initial + 2x(d,a,e) + final
+    assert stages[0] == (95.0, 180)
+    assert stages[-1] == (72.0, 300)
+    assert cycles == [(4, 2, 10), (7, 5, 25)]
+
+
 def test_device_state_defaults():
     state = DeviceState()
     assert state.connected is False

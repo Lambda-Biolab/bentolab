@@ -33,6 +33,7 @@ from typing import Any
 from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 
+from .models import PCRProfile
 from .protocol import (
     BENTO_ADV_SERVICE_UUID,
     NUS_RX_CHAR_UUID,
@@ -409,6 +410,34 @@ class BentoLabBLE:
         await self._send("pg")
         await self._collect_responses(timeout=3.0)
         logger.info("PCR run stopped")
+
+    def run_profile(
+        self,
+        profile: PCRProfile,
+        lid_temp: float = 110.0,
+        poll_interval: float = 5.0,
+    ) -> AsyncIterator[PCRRunState]:
+        """Run a :class:`PCRProfile` and yield live status updates.
+
+        Convenience wrapper around :meth:`run_pcr` that accepts a
+        high-level :class:`PCRProfile` and flattens it into the stage/cycle
+        tuples the device protocol expects.
+
+        Usage::
+
+            async with BentoLabBLE() as lab:
+                profile = PCRProfile.simple(num_cycles=30)
+                async for state in lab.run_profile(profile):
+                    print(f"{state.block_temperature}C  progress={state.progress}")
+        """
+        stages, cycles = profile.to_stages_and_cycles()
+        return self.run_pcr(
+            name=profile.name,
+            stages=stages,
+            cycles=cycles,
+            lid_temp=lid_temp,
+            poll_interval=poll_interval,
+        )
 
     async def run_pcr(
         self,

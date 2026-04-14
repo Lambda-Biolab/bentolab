@@ -9,6 +9,7 @@ from bentolab.ble_client import (
     PCRRunState,
     ProfileData,
 )
+from bentolab.models import PCRProfile
 
 # --- Fixtures ---
 
@@ -144,3 +145,42 @@ def test_on_disconnect_callback(lab):
     lab._on_disconnect(None)
     assert called == [True]
     assert lab._client is None
+
+
+# --- run_profile convenience wrapper ---
+
+
+async def test_run_profile_flattens_and_forwards(lab):
+    profile = PCRProfile.simple(
+        name="Unit Test PCR",
+        num_cycles=12,
+        initial_denaturation=(95.0, 120),
+        denaturation=(95.0, 20),
+        annealing=(60.0, 20),
+        extension=(72.0, 40),
+        final_extension=(72.0, 180),
+    )
+
+    captured: dict = {}
+
+    async def fake_run_pcr(**kwargs):
+        captured.update(kwargs)
+        yield PCRRunState(running=False, progress=100, block_temperature=72.0)
+
+    lab.run_pcr = fake_run_pcr  # type: ignore[method-assign]
+
+    states = [s async for s in lab.run_profile(profile, lid_temp=108.0, poll_interval=1.5)]
+
+    assert len(states) == 1
+    assert states[0].progress == 100
+    assert captured["name"] == "Unit Test PCR"
+    assert captured["stages"] == [
+        (95.0, 120),
+        (95.0, 20),
+        (60.0, 20),
+        (72.0, 40),
+        (72.0, 180),
+    ]
+    assert captured["cycles"] == [(4, 2, 12)]
+    assert captured["lid_temp"] == 108.0
+    assert captured["poll_interval"] == 1.5

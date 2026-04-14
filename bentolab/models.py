@@ -72,6 +72,38 @@ class PCRProfile:
             final_extension=ThermalStep(*final_extension),
         )
 
+    def to_stages_and_cycles(
+        self,
+    ) -> tuple[list[tuple[float, int]], list[tuple[int, int, int]]]:
+        """Flatten the profile into (stages, cycles) for the device protocol.
+
+        The Bento Lab protocol expects a flat list of thermal stages plus a
+        list of ``(from_stage, to_stage, count)`` loop tuples referencing
+        stages by 1-based index. This method walks the profile and emits:
+
+        - Stage 1: initial denaturation
+        - Stages 2..K: the thermal steps of each ``CycleStep`` in order
+          (denaturation, annealing, extension)
+        - One cycle tuple per ``CycleStep`` looping from its extension stage
+          back to its denaturation stage ``repeat_count`` times
+        - Final stage: final extension
+        """
+        stages: list[tuple[float, int]] = [
+            (self.initial_denaturation.temperature, self.initial_denaturation.duration)
+        ]
+        cycles: list[tuple[int, int, int]] = []
+
+        for cycle in self.cycles:
+            denat_idx = len(stages) + 1
+            stages.append((cycle.denaturation.temperature, cycle.denaturation.duration))
+            stages.append((cycle.annealing.temperature, cycle.annealing.duration))
+            stages.append((cycle.extension.temperature, cycle.extension.duration))
+            extend_idx = len(stages)
+            cycles.append((extend_idx, denat_idx, cycle.repeat_count))
+
+        stages.append((self.final_extension.temperature, self.final_extension.duration))
+        return stages, cycles
+
 
 @dataclass
 class DeviceState:

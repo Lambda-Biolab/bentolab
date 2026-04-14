@@ -25,6 +25,13 @@ from .ble_client import (
     PCRRunState,
     ProfileData,
 )
+from .models import (
+    CycleStep,
+    DeviceState,
+    DeviceStatus,
+    PCRProfile,
+    ThermalStep,
+)
 from .protocol import (
     CycleData,
     ProfileEntry,
@@ -40,11 +47,16 @@ __all__ = [
     "BentoLabConnectionError",
     "BentoLabError",
     "CycleData",
+    "CycleStep",
+    "DeviceState",
+    "DeviceStatus",
+    "PCRProfile",
     "PCRRunState",
     "ProfileData",
     "ProfileEntry",
     "RunStatus",
     "StageData",
     "StatusBroadcast",
+    "ThermalStep",
     "TouchdownStageData",
 ]
