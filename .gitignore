@@ -7,12 +7,15 @@ __pycache__/
 dist/
 build/
 
-# RE artifacts (removed from tree, kept in git history)
+# Vendor firmware
+firmware/
+
+# BLE captures and session logs
+captures/
+
+# APK analysis artifacts
 apk/
 apk_decompiled/
-captures/
-firmware/
-scripts/
 
 # Environment and secrets
 .env
