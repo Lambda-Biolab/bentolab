@@ -54,11 +54,7 @@ exclude = [
     "**/__pycache__",
     "**/node_modules",
     "**/.*",
-    "bentolab/thermocycler.py",
-    "bentolab/wifi_client.py",
 ]
-reportOptionalMemberAccess = "warning"
-reportArgumentType = "warning"
 
 [build-system]
 requires = ["setuptools>=68.0"]

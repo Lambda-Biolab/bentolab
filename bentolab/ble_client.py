@@ -127,10 +127,11 @@ class BentoLabBLE:
             return
 
         if parsed["type"] == "status":
-            self._last_status = parsed["data"]
+            status: StatusBroadcast = parsed["data"]
+            self._last_status = status
             for cb in self._status_callbacks:
                 try:
-                    cb(self._last_status)
+                    cb(status)
                 except Exception:
                     logger.exception("Status callback error")
         elif parsed["type"] != "continuation":
@@ -151,24 +152,29 @@ class BentoLabBLE:
     # Low-level send/receive
     # ------------------------------------------------------------------
 
-    def _check_connected(self) -> None:
+    def _require_client(self) -> BleakClient:
+        """Return the live BleakClient or raise if we're not connected."""
         if not self._client or not self._client.is_connected:
             raise BentoLabConnectionError("Not connected to Bento Lab")
+        return self._client
+
+    def _check_connected(self) -> None:
+        self._require_client()
 
     async def _send(self, cmd: str) -> None:
         """Send a command to the device via NUS RX."""
-        self._check_connected()
+        client = self._require_client()
         data = encode_command(cmd)
         try:
-            await self._client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=False)
+            await client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=False)
         except BleakError as e:
             raise BentoLabConnectionError(f"Write failed: {e}") from e
 
     async def _send_raw(self, data: bytes) -> None:
         """Send raw bytes to NUS RX."""
-        self._check_connected()
+        client = self._require_client()
         try:
-            await self._client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=False)
+            await client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=False)
         except BleakError as e:
             raise BentoLabConnectionError(f"Write failed: {e}") from e
 
