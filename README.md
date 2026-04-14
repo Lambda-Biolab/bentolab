@@ -76,3 +76,15 @@ python tools/ble_commander.py
 - [Protocol Commands](docs/protocol-commands.md)
 - [Firmware Analysis](docs/firmware-analysis.md)
 - [Wi-Fi Protocol](docs/wifi-protocol.md)
+
+## License
+
+[MIT](LICENSE).
+
+## Disclaimer
+
+Not affiliated with, endorsed by, or sponsored by Bento Bioworks Ltd.
+"Bento Lab" is a trademark of Bento Bioworks. Protocol information in this
+repository was determined through interoperability analysis of BLE
+communication with devices owned by the author, consistent with DMCA §1201(f)
+(US) and Article 6 of the EU Software Directive 2009/24/EC.
