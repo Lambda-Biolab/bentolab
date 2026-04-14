@@ -30,7 +30,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from bleak import BleakClient, BleakError, BleakScanner
+from bleak import BleakClient, BleakScanner
+from bleak.exc import BleakError
 
 from .protocol import (
     BENTO_ADV_SERVICE_UUID,

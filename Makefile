@@ -1,7 +1,10 @@
-.PHONY: setup lint format test scan-ble scan-wifi commander monitor-ble clean help
+.PHONY: help setup validate lint_fix quick_validate check_complexity check_links check_docs test scan-ble scan-wifi commander monitor-ble clean
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
+SRC := bentolab/ tests/ tools/
+
+# ---- Core targets ----
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -9,19 +12,40 @@ help: ## Show this help
 
 setup: ## Create venv and install all dependencies
 	uv venv --python 3.13
-	uv pip install -r requirements.txt
-	uv pip install ruff
+	uv pip install -e ".[dev,tools]"
 	@echo "Activate with: source .venv/bin/activate"
 
-lint: ## Run ruff linter
-	$(VENV)/ruff check tools/ bentolab/ tests/
+# ---- Validation targets ----
 
-format: ## Format code with ruff
-	$(VENV)/ruff format tools/ bentolab/ tests/
-	$(VENV)/ruff check --fix tools/ bentolab/ tests/
+validate: ## Full read-only validation (format, lint, types, complexity, tests)
+	$(VENV)/ruff format --check $(SRC)
+	$(VENV)/ruff check $(SRC)
+	$(VENV)/pyright bentolab/
+	$(VENV)/complexipy bentolab/
+	$(VENV)/pytest tests/ -v -m "not hardware"
 
-test: ## Run test suite
-	$(VENV)/pytest tests/ -v
+lint_fix: ## Auto-fix lint and format issues
+	$(VENV)/ruff format $(SRC)
+	$(VENV)/ruff check --fix $(SRC)
+
+quick_validate: ## Quick check: ruff + pyright (skip tests)
+	$(VENV)/ruff format --check $(SRC)
+	$(VENV)/ruff check $(SRC)
+	$(VENV)/pyright bentolab/
+
+check_complexity: ## Run complexipy analysis
+	$(VENV)/complexipy bentolab/
+
+check_links: ## Check links with lychee
+	lychee --config .lychee.toml .
+
+check_docs: ## Lint markdown files
+	markdownlint-cli2 "**/*.md" "#node_modules"
+
+test: ## Run test suite (excludes hardware tests)
+	$(VENV)/pytest tests/ -v -m "not hardware"
+
+# ---- Tool runners ----
 
 scan-ble: ## Scan for BLE devices (10s)
 	$(PYTHON) tools/ble_scanner.py --scan-time 10
@@ -34,6 +58,8 @@ commander: ## Launch interactive BLE commander
 
 monitor-ble: ## Monitor BLE notifications (Ctrl+C to stop)
 	$(PYTHON) tools/ble_monitor.py
+
+# ---- Cleanup ----
 
 clean: ## Remove build artifacts and caches
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

@@ -302,7 +302,7 @@ class RunStatus:
         )
 
 
-def decode_response(data: bytes) -> dict:
+def decode_response(data: bytes) -> dict:  # noqa: C901
     """Decode a NUS TX notification into a structured dict.
 
     Returns dict with 'type' key and parsed fields.
