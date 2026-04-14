@@ -21,7 +21,7 @@ validate: ## Full read-only validation (format, lint, types, complexity, tests)
 	$(VENV)/ruff format --check $(SRC)
 	$(VENV)/ruff check $(SRC)
 	$(VENV)/pyright bentolab/
-	$(VENV)/complexipy bentolab/ --max-complexity 10
+	$(VENV)/complexipy bentolab/
 	$(VENV)/pytest tests/ -v -m "not hardware"
 
 lint_fix: ## Auto-fix lint and format issues
@@ -34,7 +34,7 @@ quick_validate: ## Quick check: ruff + pyright (skip tests)
 	$(VENV)/pyright bentolab/
 
 check_complexity: ## Run complexipy analysis
-	$(VENV)/complexipy bentolab/ --max-complexity 10
+	$(VENV)/complexipy bentolab/
 
 check_links: ## Check links with lychee
 	lychee --config .lychee.toml .

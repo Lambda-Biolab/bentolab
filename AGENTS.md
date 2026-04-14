@@ -52,6 +52,12 @@ docs/                # Protocol RE findings (GATT profile, commands, firmware)
 | `6e400003-...` | NUS TX (notifications from device) |
 | `6e409a18-...` | Bento advertising / scan filter |
 
+## Environment
+
+- Python 3.13 (venv at `.venv/`, created via `make setup`).
+- Package manager: `uv`. Never use `pip` directly.
+- `requires-python = ">=3.11"` — CI matrix covers 3.11/3.12/3.13.
+
 ## QA
 
 ```bash
