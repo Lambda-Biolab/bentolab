@@ -4,6 +4,10 @@ Python control library for [Bento Lab](https://bento.bio/) PCR workstations
 (Bento Bioworks, London). Communicates over Bluetooth LE using the Nordic UART
 Service protocol, reverse-engineered from the official Bento Bio app.
 
+![Bento Lab Pro V1.4 in use — PCR profile on the display, centrifuge rotor and gel box visible](docs/bento-lab.png)
+
+*My Bento Lab Pro V1.4 (unit BL13489) mid-run — the device this library was reverse-engineered against.*
+
 ## Target Devices
 
 | Unit | Hardware | Serial | Connectivity | Status |
