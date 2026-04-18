@@ -1,0 +1,25 @@
+# bentolab
+
+> 
+
+## Documentation
+
+- [README](https://github.com/Lambda-Biolab/bentolab/blob/main/README.md)
+- [BLE GATT Profile](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/ble-gatt-profile.md)
+- [Protocol Commands](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/protocol-commands.md)
+- [Firmware Analysis](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/firmware-analysis.md)
+- [Wi-Fi Protocol](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/wifi-protocol.md)
+
+## Source
+
+- [ble_client.py](https://github.com/Lambda-Biolab/bentolab/blob/main/bentolab/ble_client.py): Async BLE connectivity & command protocol
+- [models.py](https://github.com/Lambda-Biolab/bentolab/blob/main/bentolab/models.py): Data models (DeviceStatus, ThermalStep, PCRProfile)
+- [protocol.py](https://github.com/Lambda-Biolab/bentolab/blob/main/bentolab/protocol.py): Low-level NUS UART encoding/decoding
+- [thermocycler.py](https://github.com/Lambda-Biolab/bentolab/blob/main/bentolab/thermocycler.py): Unified high-level interface
+- [wifi_client.py](https://github.com/Lambda-Biolab/bentolab/blob/main/bentolab/wifi_client.py): Wi-Fi connectivity
+
+## Tools
+
+- [ble_scanner.py](https://github.com/Lambda-Biolab/bentolab/blob/main/tools/ble_scanner.py): Device discovery & GATT enumeration
+- [ble_commander.py](https://github.com/Lambda-Biolab/bentolab/blob/main/tools/ble_commander.py): Interactive BLE command REPL
+- [session_logger.py](https://github.com/Lambda-Biolab/bentolab/blob/main/tools/session_logger.py): JSONL session recording
