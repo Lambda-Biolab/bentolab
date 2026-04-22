@@ -1,5 +1,9 @@
 # bentolab
 
+[![CodeFactor](https://www.codefactor.io/repository/github/lambda-biolab/bentolab/badge)](https://www.codefactor.io/repository/github/lambda-biolab/bentolab)
+[![CodeQL](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml/badge.svg)](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml)
+[![Dependabot](https://img.shields.io/badge/dependabot-enabled-blue?logo=dependabot)](https://github.com/Lambda-Biolab/bentolab/network/updates)
+
 Python control library for [Bento Lab](https://bento.bio/) PCR workstations
 (Bento Bioworks, London). Communicates over Bluetooth LE using the Nordic UART
 Service protocol, reverse-engineered from the official Bento Bio app.
