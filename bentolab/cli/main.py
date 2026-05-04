@@ -18,9 +18,20 @@ from .stop import stop_command
 
 app = typer.Typer(
     name="bentolab",
-    no_args_is_help=True,
-    help="Bento Lab PCR workstation control. Run subcommands or `bentolab profile new`.",
+    invoke_without_command=True,
+    help="Bento Lab PCR workstation control. Run subcommands or invoke with no args for the TUI.",
 )
+
+
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """If no subcommand was given, launch the workbench TUI."""
+    if ctx.invoked_subcommand is None:
+        from ..tui import run as run_tui  # noqa: PLC0415
+
+        run_tui()
+
+
 app.command("scan")(scan_command)
 app.command("status")(status_command)
 app.command("monitor")(monitor_command)

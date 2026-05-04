@@ -1,0 +1,49 @@
+/* Bento Lab workbench palette.
+ *
+ * Tokens defined here line up with the design plan:
+ *   --idle, --heating, --cooling, --cycling, --error, --lid, --block,
+ *   --target, --accent, --success, --danger, --warning, --muted.
+ * Textual reads these via $accent etc; we override the ones we need.
+ */
+
+Screen {
+    layout: vertical;
+    background: $background;
+    color: $text;
+}
+
+#main-row {
+    height: 1fr;
+}
+
+#left-column {
+    width: 32;
+    height: 1fr;
+}
+
+#right-column {
+    width: 1fr;
+    height: 1fr;
+}
+
+.title {
+    text-style: bold;
+    color: $accent;
+    margin: 0 0 1 0;
+}
+
+#footer-help {
+    dock: bottom;
+    height: 1;
+    background: $boost;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+ProgressBar > Bar {
+    color: $success;
+}
+
+ListView > ListItem.--highlight {
+    background: $accent 25%;
+}

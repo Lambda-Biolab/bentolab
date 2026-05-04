@@ -102,10 +102,16 @@ class BentoLabBLE:
         address: str | None = None,
         name_filter: str = r"(?i)bento",
         auto_reconnect: bool = True,
+        keep_alive_seconds: float = 30.0,
     ):
         self.address = address
         self.name_filter = re.compile(name_filter)
         self.auto_reconnect = auto_reconnect
+        # Bento firmware appears to drop the BLE link after tens of
+        # seconds of application-layer silence even though the device is
+        # happily broadcasting status. Re-issuing the handshake on a
+        # timer keeps the connection up. Set 0 to disable.
+        self.keep_alive_seconds = keep_alive_seconds
         self._client: BleakClient | None = None
         self._rx_buffer: list[dict] = []
         self._rx_event = asyncio.Event()
@@ -113,6 +119,7 @@ class BentoLabBLE:
         self._disconnect_callbacks: list[Callable[[], Any]] = []
         self._last_status: StatusBroadcast | None = None
         self._connected_address: str | None = None
+        self._keep_alive_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Notification handler
@@ -142,6 +149,9 @@ class BentoLabBLE:
         """Handle unexpected BLE disconnection."""
         logger.warning("BLE connection lost")
         self._client = None
+        if self._keep_alive_task is not None:
+            self._keep_alive_task.cancel()
+            self._keep_alive_task = None
         for cb in self._disconnect_callbacks:
             try:
                 cb()
@@ -230,19 +240,19 @@ class BentoLabBLE:
             BentoLabConnectionError: If connection fails.
         """
         target = address or self.address
-        if not target:
-            devices = await self.discover()
-            if not devices:
-                raise BentoLabConnectionError("No Bento Lab device found")
-            target = devices[0][0].address
-            logger.info("Auto-discovered: %s", devices[0][0].name)
+        ble_target = await self._resolve_target(target)
 
         try:
-            self._client = BleakClient(target, disconnected_callback=self._on_disconnect)
+            self._client = BleakClient(ble_target, disconnected_callback=self._on_disconnect)
             await self._client.connect()
             await self._client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
-            self._connected_address = target
-            logger.info("Connected to %s", target)
+            resolved_address = (
+                getattr(ble_target, "address", None)
+                if not isinstance(ble_target, str)
+                else ble_target
+            )
+            self._connected_address = resolved_address or target
+            logger.info("Connected to %s", self._connected_address)
         except BleakError as e:
             self._client = None
             raise BentoLabConnectionError(f"Connection failed: {e}") from e
@@ -250,6 +260,67 @@ class BentoLabBLE:
         # Send handshake and wait for first status
         await self._send("Xa")
         await asyncio.sleep(0.5)
+        self._start_keep_alive()
+
+    def _start_keep_alive(self) -> None:
+        if self.keep_alive_seconds <= 0:
+            return
+        if self._keep_alive_task is not None and not self._keep_alive_task.done():
+            return
+        self._keep_alive_task = asyncio.create_task(
+            self._keep_alive_loop(), name="bentolab-keep-alive"
+        )
+
+    async def _keep_alive_loop(self) -> None:
+        """Periodically poke the device so the firmware keeps the link.
+
+        Sends ``Xa`` (handshake / device-info request) on a fixed
+        cadence. The response goes through the same notification path
+        as any other reply; nothing here waits on it. If the write
+        fails the connection is already gone, so we just exit and let
+        the disconnect callback fire.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self.keep_alive_seconds)
+                if not self.is_connected:
+                    return
+                try:
+                    await self._send("Xa")
+                except BentoLabConnectionError:
+                    return
+        except asyncio.CancelledError:
+            return
+
+    async def _resolve_target(self, target: str | None) -> Any:
+        """Refresh the BLEDevice handle so CoreBluetooth has a live entry.
+
+        macOS's BLE stack rotates the random address it exposes for
+        unidentified peripherals. Passing a stale address straight to
+        ``BleakClient`` fails with "device with address ... was not
+        found", even though the device is advertising. The canonical
+        bleak fix is to look the address up with :func:`BleakScanner.
+        find_device_by_address` (or do a broader scan) before connecting.
+        """
+        if target:
+            try:
+                device = await BleakScanner.find_device_by_address(target, timeout=6.0)
+            except BleakError as e:
+                logger.warning("find_device_by_address(%s) raised: %s", target, e)
+                device = None
+            if device is not None:
+                return device
+            logger.info("Address %s not advertising; rescanning for any Bento...", target)
+
+        results = await self.discover(timeout=8.0)
+        if not results:
+            suffix = (
+                f" (looked for {target}; macOS may need Bluetooth permission)" if target else ""
+            )
+            raise BentoLabConnectionError(f"No Bento Lab device found{suffix}")
+        device = results[0][0]
+        logger.info("Resolved to %s (%s)", device.name, device.address)
+        return device
 
     async def reconnect(self) -> None:
         """Reconnect to the last known device."""
@@ -260,6 +331,11 @@ class BentoLabBLE:
 
     async def disconnect(self) -> None:
         """Disconnect from the device."""
+        if self._keep_alive_task is not None:
+            self._keep_alive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._keep_alive_task
+            self._keep_alive_task = None
         if self._client and self._client.is_connected:
             with contextlib.suppress(BleakError):
                 await self._client.stop_notify(NUS_TX_CHAR_UUID)
