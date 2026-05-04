@@ -2,26 +2,40 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+
+from textual import events
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from .._assets import bento_art
 
-_HEADER = """\
-[bold $accent]Bento Lab Workbench[/]
-[dim]Reverse-engineered BLE control for the Bento Lab PCR workstation[/]
-[dim]maintained by Lambda Biolab • lambconsulting.bio • Antonio Lamb[/]
-"""
+
+def _pkg_version() -> str:
+    try:
+        return version("bentolab")
+    except PackageNotFoundError:
+        return "dev"
+
+
+_HEADER = (
+    "[bold $accent]Bento Lab Workbench[/]  [dim]v{version}[/]\n"
+    "[dim]Open-source BLE workbench for the Bento Lab PCR workstation[/]\n"
+    "[dim]maintained by [bold]@antomicblitz[/] and [bold]@qte77[/][/]"
+)
 
 _KEYS = """\
 [bold]Keys[/]
   c   connect          d   disconnect
   r   run profile      s   stop run
   e   edit profile     R   refresh lists
-  ?   this screen      q   quit
+  D   forget device    ?   this screen
+  q   quit
 """
+
+_DISMISS_KEYS = {"escape", "enter", "space", "q"}
 
 
 class SplashModal(ModalScreen[None]):
@@ -31,11 +45,12 @@ class SplashModal(ModalScreen[None]):
     SplashModal {
         align: center middle;
     }
-    SplashModal > Vertical {
+    SplashModal > VerticalScroll {
         background: $surface;
         border: thick $accent;
         padding: 1 2;
         width: 104;
+        max-width: 100%;
         height: auto;
         max-height: 90%;
     }
@@ -63,14 +78,18 @@ class SplashModal(ModalScreen[None]):
     """
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static(_HEADER, classes="header")
+        with VerticalScroll():
+            yield Static(_HEADER.format(version=_pkg_version()), classes="header")
             yield Static(bento_art(), classes="art", markup=False)
             yield Static(_KEYS, classes="keys")
-            yield Static("press any key to continue", classes="hint")
+            yield Static("scroll to see keys • Esc / Enter / q to dismiss", classes="hint")
 
-    def on_key(self) -> None:
-        self.dismiss(None)
+    def on_key(self, event: events.Key) -> None:
+        # Let arrow / page keys scroll the content; only dismiss on the
+        # explicit close keys.
+        if event.key in _DISMISS_KEYS:
+            event.stop()
+            self.dismiss(None)
 
     def on_click(self) -> None:
         self.dismiss(None)
