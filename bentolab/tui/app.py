@@ -48,6 +48,7 @@ class BentoLabApp(App):
         Binding("s", "stop", "Stop"),
         Binding("e", "edit_profile", "Edit"),
         Binding("R", "refresh_lists", "Refresh"),
+        Binding("D", "forget_device", "Forget device"),
         Binding("question_mark", "splash", "Help"),
         Binding("q", "quit_workbench", "Quit"),
     ]
@@ -96,16 +97,43 @@ class BentoLabApp(App):
             self.notify("Already connected.")
             return
         address = self.device_list.selected
-        if address is None:
-            picked = await self.push_screen_wait(ScanModal())
-            if not picked:
+        if address is not None:
+            try:
+                await self.session.connect(address=address)
                 return
-            address = picked
-            self.device_list.refresh_list()
+            except Exception as e:
+                # Cached address rotated / device no longer advertising
+                # under that ID. Forget it and fall through to a scan.
+                self.notify(
+                    f"Cached connect failed ({e}). Scanning for new address…",
+                    severity="warning",
+                    timeout=5.0,
+                )
+                from .. import devices as device_registry  # noqa: PLC0415
+
+                device_registry.forget(address)
+                self.device_list.refresh_list()
+
+        picked = await self.push_screen_wait(ScanModal())
+        if not picked:
+            return
+        self.device_list.refresh_list()
         try:
-            await self.session.connect(address=address)
+            await self.session.connect(address=picked)
         except Exception as e:
             self.notify(f"Connect failed: {e}", severity="error")
+
+    @work
+    async def action_forget_device(self) -> None:
+        address = self.device_list.selected
+        if address is None:
+            self.notify("Highlight a device first.")
+            return
+        from .. import devices as device_registry  # noqa: PLC0415
+
+        device_registry.forget(address)
+        self.device_list.refresh_list()
+        self.notify(f"Forgot {address}")
 
     async def action_disconnect(self) -> None:
         await self.session.disconnect()

@@ -263,16 +263,19 @@ class BentoLabBLE:
         """
         if target:
             try:
-                device = await BleakScanner.find_device_by_address(target, timeout=10.0)
-            except BleakError:
+                device = await BleakScanner.find_device_by_address(target, timeout=6.0)
+            except BleakError as e:
+                logger.warning("find_device_by_address(%s) raised: %s", target, e)
                 device = None
             if device is not None:
                 return device
             logger.info("Address %s not advertising; rescanning for any Bento...", target)
 
-        results = await self.discover()
+        results = await self.discover(timeout=8.0)
         if not results:
-            suffix = f" (looked for {target})" if target else ""
+            suffix = (
+                f" (looked for {target}; macOS may need Bluetooth permission)" if target else ""
+            )
             raise BentoLabConnectionError(f"No Bento Lab device found{suffix}")
         device = results[0][0]
         logger.info("Resolved to %s (%s)", device.name, device.address)
