@@ -6,6 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Label, ProgressBar, Static
 
+from ...models import PCRProfile
 from ..messages import (
     ConnectionChanged,
     RunFinished,
@@ -34,6 +35,7 @@ class StatusPane(Vertical):
         self._stage = "idle"
         self._progress = 0
         self._connected_str = "[grey50]disconnected[/]"
+        self._active_profile: PCRProfile | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Live Status", classes="title")
@@ -63,6 +65,7 @@ class StatusPane(Vertical):
         self._temps.update(f"Block    {self._block}      Lid    {self._lid}")
 
     def on_run_started(self, message: RunStarted) -> None:
+        self._active_profile = message.profile
         self._profile_name = message.profile_name
         self._profile.update(f"Profile  {self._profile_name}")
         self._stage = "starting"
@@ -72,9 +75,14 @@ class StatusPane(Vertical):
     def on_run_progressed(self, message: RunProgressed) -> None:
         self._progress = message.state.progress
         self._bar.update(progress=max(0, min(100, self._progress)))
-        self._stage = "running"
-        self._stage_label.update(f"Stage    {self._stage}  {self._progress}%")
+        if self._active_profile is not None:
+            stage = self._active_profile.stage_at(message.state.elapsed_seconds)
+            self._stage = stage.label
+            self._stage_label.update(f"Stage    {self._stage}")
+        else:
+            self._stage_label.update(f"Stage    running  {self._progress}%")
 
     def on_run_finished(self, message: RunFinished) -> None:
+        self._active_profile = None
         self._stage = "complete" if message.success else "stopped"
         self._stage_label.update(f"Stage    {self._stage}")

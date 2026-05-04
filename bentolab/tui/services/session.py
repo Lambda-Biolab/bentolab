@@ -78,7 +78,7 @@ class Session:
             "run_config",
             {"profile": profile.to_dict(), "lid_temp": profile.lid_temperature},
         )
-        self.app.post_message(RunStarted(profile_name=profile.name, run_id=run_id))
+        self.app.post_message(RunStarted(profile=profile, run_id=run_id))
         success = False
         try:
             async for state in self.lab.run_profile(profile, lid_temp=profile.lid_temperature):

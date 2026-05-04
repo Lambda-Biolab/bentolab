@@ -31,6 +31,16 @@ class ThermalStep:
 
 
 @dataclass
+class StageInfo:
+    """Where the device is in a profile, derived from elapsed time."""
+
+    label: str
+    phase: str  # "initial", "denat", "anneal", "extend", "final", "hold"
+    cycle: int
+    total_cycles: int
+
+
+@dataclass
 class CycleStep:
     """One cycle of denaturation -> annealing -> extension."""
 
@@ -109,6 +119,65 @@ class PCRProfile:
 
         stages.append((self.final_extension.temperature, self.final_extension.duration))
         return stages, cycles
+
+    def total_cycle_count(self) -> int:
+        return sum(c.repeat_count for c in self.cycles)
+
+    def stage_at(self, elapsed_seconds: float) -> StageInfo:
+        """Return what stage the run is in at ``elapsed_seconds``.
+
+        Computed by walking the cumulative durations declared on the
+        profile. Doesn't account for ramp time, so the device may lag
+        the computed label by a few seconds during transitions.
+        """
+        total = self.total_cycle_count()
+        t = float(elapsed_seconds)
+
+        if t < self.initial_denaturation.duration:
+            return StageInfo(
+                label=f"initial denaturation {self.initial_denaturation.temperature:.0f}°C",
+                phase="initial",
+                cycle=0,
+                total_cycles=total,
+            )
+        t -= self.initial_denaturation.duration
+
+        cycle_offset = 0
+        for cycle in self.cycles:
+            per_cycle = (
+                cycle.denaturation.duration + cycle.annealing.duration + cycle.extension.duration
+            )
+            block_total = per_cycle * cycle.repeat_count
+            if t < block_total:
+                iter_idx = int(t // per_cycle)
+                cycle_num = cycle_offset + iter_idx + 1
+                within = t - iter_idx * per_cycle
+                if within < cycle.denaturation.duration:
+                    phase = "denat"
+                    label = f"denat {cycle.denaturation.temperature:.0f}°C"
+                elif within < cycle.denaturation.duration + cycle.annealing.duration:
+                    phase = "anneal"
+                    label = f"anneal {cycle.annealing.temperature:.0f}°C"
+                else:
+                    phase = "extend"
+                    label = f"extend {cycle.extension.temperature:.0f}°C"
+                return StageInfo(
+                    label=f"cycle {cycle_num}/{total} — {label}",
+                    phase=phase,
+                    cycle=cycle_num,
+                    total_cycles=total,
+                )
+            t -= block_total
+            cycle_offset += cycle.repeat_count
+
+        if t < self.final_extension.duration:
+            return StageInfo(
+                label=f"final extension {self.final_extension.temperature:.0f}°C",
+                phase="final",
+                cycle=total,
+                total_cycles=total,
+            )
+        return StageInfo(label="hold", phase="hold", cycle=total, total_cycles=total)
 
     def estimated_runtime_seconds(self) -> int:
         """Sum of step durations across the program (excludes ramp time)."""

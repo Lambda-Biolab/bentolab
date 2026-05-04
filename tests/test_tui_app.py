@@ -80,7 +80,7 @@ async def test_run_started_progress_then_finished(data_dir: Path) -> None:
     app = BentoLabApp(show_splash=False)
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.post_message(RunStarted(profile_name="tui-demo", run_id="x"))
+        app.post_message(RunStarted(profile=_make_profile(), run_id="x"))
         app.post_message(
             RunProgressed(state=PCRRunState(running=True, progress=42, block_temperature=60.0))
         )

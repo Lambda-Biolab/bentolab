@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from textual.message import Message
 
 from ..ble_client import PCRRunState
+from ..models import PCRProfile
 from ..protocol import StatusBroadcast
 
 
@@ -22,8 +23,12 @@ class StatusUpdated(Message):
 
 @dataclass
 class RunStarted(Message):
-    profile_name: str
+    profile: PCRProfile
     run_id: str
+
+    @property
+    def profile_name(self) -> str:
+        return self.profile.name
 
 
 @dataclass

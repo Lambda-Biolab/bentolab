@@ -9,6 +9,12 @@ from textual.widgets import Static
 
 from .._assets import bento_art
 
+_HEADER = """\
+[bold $accent]Bento Lab Workbench[/]
+[dim]Reverse-engineered BLE control for the Bento Lab PCR workstation[/]
+[dim]maintained by Lambda Biolab • lambconsulting.bio • Antonio Lamb[/]
+"""
+
 _KEYS = """\
 [bold]Keys[/]
   c   connect          d   disconnect
@@ -33,17 +39,16 @@ class SplashModal(ModalScreen[None]):
         height: auto;
         max-height: 90%;
     }
+    SplashModal Static.header {
+        width: 100;
+        text-align: center;
+        margin: 0 0 1 0;
+    }
     SplashModal Static.art {
         width: 100;
         height: auto;
         color: $accent;
         text-align: left;
-    }
-    SplashModal Static.tagline {
-        width: 100;
-        color: $text;
-        text-align: center;
-        margin: 1 0 0 0;
     }
     SplashModal Static.keys {
         width: 100;
@@ -59,8 +64,8 @@ class SplashModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
+            yield Static(_HEADER, classes="header")
             yield Static(bento_art(), classes="art", markup=False)
-            yield Static("[bold]Bento Lab Workbench[/]", classes="tagline")
             yield Static(_KEYS, classes="keys")
             yield Static("press any key to continue", classes="hint")
 
