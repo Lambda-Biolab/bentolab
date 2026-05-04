@@ -230,19 +230,19 @@ class BentoLabBLE:
             BentoLabConnectionError: If connection fails.
         """
         target = address or self.address
-        if not target:
-            devices = await self.discover()
-            if not devices:
-                raise BentoLabConnectionError("No Bento Lab device found")
-            target = devices[0][0].address
-            logger.info("Auto-discovered: %s", devices[0][0].name)
+        ble_target = await self._resolve_target(target)
 
         try:
-            self._client = BleakClient(target, disconnected_callback=self._on_disconnect)
+            self._client = BleakClient(ble_target, disconnected_callback=self._on_disconnect)
             await self._client.connect()
             await self._client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
-            self._connected_address = target
-            logger.info("Connected to %s", target)
+            resolved_address = (
+                getattr(ble_target, "address", None)
+                if not isinstance(ble_target, str)
+                else ble_target
+            )
+            self._connected_address = resolved_address or target
+            logger.info("Connected to %s", self._connected_address)
         except BleakError as e:
             self._client = None
             raise BentoLabConnectionError(f"Connection failed: {e}") from e
@@ -250,6 +250,33 @@ class BentoLabBLE:
         # Send handshake and wait for first status
         await self._send("Xa")
         await asyncio.sleep(0.5)
+
+    async def _resolve_target(self, target: str | None) -> Any:
+        """Refresh the BLEDevice handle so CoreBluetooth has a live entry.
+
+        macOS's BLE stack rotates the random address it exposes for
+        unidentified peripherals. Passing a stale address straight to
+        ``BleakClient`` fails with "device with address ... was not
+        found", even though the device is advertising. The canonical
+        bleak fix is to look the address up with :func:`BleakScanner.
+        find_device_by_address` (or do a broader scan) before connecting.
+        """
+        if target:
+            try:
+                device = await BleakScanner.find_device_by_address(target, timeout=10.0)
+            except BleakError:
+                device = None
+            if device is not None:
+                return device
+            logger.info("Address %s not advertising; rescanning for any Bento...", target)
+
+        results = await self.discover()
+        if not results:
+            suffix = f" (looked for {target})" if target else ""
+            raise BentoLabConnectionError(f"No Bento Lab device found{suffix}")
+        device = results[0][0]
+        logger.info("Resolved to %s (%s)", device.name, device.address)
+        return device
 
     async def reconnect(self) -> None:
         """Reconnect to the last known device."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ... import devices as device_registry
 from ..._logging import SessionLogger
 from ...ble_client import BentoLabBLE
 from ...models import PCRProfile
@@ -53,6 +54,12 @@ class Session:
         try:
             await self.lab.connect(address)
             self.address = getattr(self.lab, "_connected_address", address)
+            if self.address:
+                # Refresh the cached entry so future launches don't retry a
+                # rotated/stale address.
+                device_registry.remember(
+                    device_registry.Device(address=self.address, transport="ble")
+                )
             self.app.post_message(ConnectionChanged(connected=True, address=self.address))
         except Exception as e:
             self.lab = None
