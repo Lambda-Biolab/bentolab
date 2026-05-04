@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime
 
 from textual.app import ComposeResult
-from textual.containers import Grid, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, ListItem, ListView, Static
 
@@ -28,10 +28,11 @@ class ScanModal(ModalScreen[str | None]):
     }
     ScanModal Button {
         margin: 1 1 0 0;
+        min-width: 14;
     }
-    ScanModal #scan-grid {
-        grid-size: 2 1;
+    ScanModal #scan-row {
         height: auto;
+        align-horizontal: right;
     }
     ScanModal ListView {
         height: 1fr;
@@ -50,7 +51,7 @@ class ScanModal(ModalScreen[str | None]):
             yield self._status
             self._list = ListView(id="scan-list")
             yield self._list
-            with Grid(id="scan-grid"):
+            with Horizontal(id="scan-row"):
                 yield Button("Connect", variant="primary", id="scan-connect")
                 yield Button("Cancel", variant="default", id="scan-cancel")
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Grid, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
@@ -24,10 +24,11 @@ class ConfirmRunModal(ModalScreen[bool]):
     }
     ConfirmRunModal Button {
         margin: 1 1 0 0;
+        min-width: 12;
     }
-    ConfirmRunModal #cr-grid {
-        grid-size: 2 1;
+    ConfirmRunModal #cr-row {
         height: auto;
+        align-horizontal: center;
     }
     """
 
@@ -53,7 +54,7 @@ class ConfirmRunModal(ModalScreen[bool]):
                 f"{self.profile.lid_temperature:.0f} °C — verify samples loaded "
                 f"and lid closed."
             )
-            with Grid(id="cr-grid"):
+            with Horizontal(id="cr-row"):
                 yield Button("Start", variant="success", id="cr-start")
                 yield Button("Cancel", variant="default", id="cr-cancel")
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 
 from textual.app import ComposeResult
-from textual.containers import Grid, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
@@ -30,10 +30,11 @@ class ConfirmQuitModal(ModalScreen[QuitChoice]):
     }
     ConfirmQuitModal Button {
         margin: 1 1 0 0;
+        min-width: 16;
     }
-    ConfirmQuitModal #cq-grid {
-        grid-size: 3 1;
+    ConfirmQuitModal #cq-row {
         height: auto;
+        align-horizontal: center;
     }
     """
 
@@ -50,7 +51,7 @@ class ConfirmQuitModal(ModalScreen[QuitChoice]):
             yield Static("")
             yield Static(f"Profile  {self.profile_name}")
             yield Static(f"Progress {self.progress}%")
-            with Grid(id="cq-grid"):
+            with Horizontal(id="cq-row"):
                 yield Button("Stop run + quit", variant="error", id="cq-stop")
                 yield Button("Quit", variant="warning", id="cq-quit")
                 yield Button("Cancel", variant="default", id="cq-cancel")
