@@ -10,6 +10,7 @@ from bentolab.ble_client import (
     ProfileData,
 )
 from bentolab.models import PCRProfile
+from bentolab.protocol import RunStatus, StatusBroadcast
 
 # --- Fixtures ---
 
@@ -184,3 +185,125 @@ async def test_run_profile_flattens_and_forwards(lab):
     assert captured["cycles"] == [(4, 2, 12)]
     assert captured["lid_temp"] == 108.0
     assert captured["poll_interval"] == 1.5
+
+
+# --- run_pcr termination logic ---
+
+
+def _status(block: int = 25, lid: int = 110, running: int = 1) -> StatusBroadcast:
+    return StatusBroadcast(
+        running=running,
+        field2=0,
+        field3=0,
+        field4=0,
+        block_temperature=block,
+        lid_temperature=lid,
+        field7=0,
+    )
+
+
+def _patch_run_pcr_dependencies(
+    lab: BentoLabBLE,
+    *,
+    run_status_seq: list[RunStatus],
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[PCRRunState]:
+    """Wire up start_run/get_status/poll_run_status/sleep for run_pcr tests."""
+
+    async def fake_start_run(**_kwargs):
+        return None
+
+    async def fake_get_status():
+        return _status()
+
+    seq_iter = iter(run_status_seq)
+
+    async def fake_poll_run_status():
+        try:
+            return next(seq_iter)
+        except StopIteration:
+            return RunStatus(running=False, checksum=0, progress=100)
+
+    async def fake_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(lab, "start_run", fake_start_run)
+    monkeypatch.setattr(lab, "get_status", fake_get_status)
+    monkeypatch.setattr(lab, "poll_run_status", fake_poll_run_status)
+    monkeypatch.setattr("bentolab.ble_client.asyncio.sleep", fake_sleep)
+    return []
+
+
+async def test_run_pcr_ignores_transient_not_running_during_grace(lab, monkeypatch):
+    """A single early running=False (lid-heat ramp) must not end the run."""
+    run_status_seq = [
+        RunStatus(running=True, checksum=0, progress=10),
+        RunStatus(running=True, checksum=0, progress=23),
+        RunStatus(running=True, checksum=0, progress=36),
+        RunStatus(running=True, checksum=0, progress=50),
+        RunStatus(running=False, checksum=0, progress=63),  # transient flip
+        RunStatus(running=True, checksum=0, progress=70),
+        RunStatus(running=True, checksum=0, progress=99),
+        RunStatus(running=False, checksum=0, progress=100),  # real completion
+    ]
+    _patch_run_pcr_dependencies(lab, run_status_seq=run_status_seq, monkeypatch=monkeypatch)
+
+    states = [
+        s
+        async for s in lab.run_pcr(
+            poll_interval=10.0,
+            startup_grace_seconds=120.0,
+            completion_confirmations=3,
+        )
+    ]
+
+    # Must consume past the transient (index 4) and reach completion at index 7.
+    assert len(states) == 8
+    assert states[-1].progress == 100
+    assert not states[-1].running
+
+
+async def test_run_pcr_completes_on_progress_99(lab, monkeypatch):
+    """Reaching peak progress >=99% terminates immediately on next idle."""
+    run_status_seq = [
+        RunStatus(running=True, checksum=0, progress=50),
+        RunStatus(running=True, checksum=0, progress=99),
+        RunStatus(running=False, checksum=0, progress=100),
+    ]
+    _patch_run_pcr_dependencies(lab, run_status_seq=run_status_seq, monkeypatch=monkeypatch)
+
+    states = [
+        s
+        async for s in lab.run_pcr(
+            poll_interval=10.0,
+            startup_grace_seconds=600.0,  # well past elapsed
+            completion_confirmations=5,
+        )
+    ]
+
+    assert len(states) == 3
+    assert states[-1].progress == 100
+
+
+async def test_run_pcr_requires_consecutive_idle_after_grace(lab, monkeypatch):
+    """After grace, N consecutive idle polls (without progress=99) terminate."""
+    run_status_seq = [
+        RunStatus(running=True, checksum=0, progress=20),
+        RunStatus(running=True, checksum=0, progress=40),
+        RunStatus(running=False, checksum=0, progress=50),  # past grace
+        RunStatus(running=False, checksum=0, progress=50),
+        RunStatus(running=False, checksum=0, progress=50),  # 3rd consecutive
+    ]
+    _patch_run_pcr_dependencies(lab, run_status_seq=run_status_seq, monkeypatch=monkeypatch)
+
+    states = [
+        s
+        async for s in lab.run_pcr(
+            poll_interval=10.0,
+            startup_grace_seconds=20.0,  # grace ends after 2 polls
+            completion_confirmations=3,
+        )
+    ]
+
+    assert len(states) == 5
+    assert not states[-1].running
