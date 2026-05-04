@@ -57,7 +57,10 @@ def _try_parse(path: Path, cutoff: datetime) -> ActiveRun | None:
     started = summary["started"]
     if started is None or started < cutoff:
         return None
-    if summary["last_event"] == "run_finished" or summary["last_type"] == "session_end":
+    # `run_finished` is the only signal that the device-side run is done.
+    # `session_end` only means our logger closed (e.g. CLI --no-tail) —
+    # the device may still be cycling, so don't treat it as terminated.
+    if summary["last_event"] == "run_finished":
         return None
     if summary["profile_dict"] is None:
         return None

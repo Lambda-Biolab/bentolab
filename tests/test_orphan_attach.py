@@ -114,3 +114,21 @@ def test_picks_most_recent_when_multiple_orphans(tmp_path: Path) -> None:
 
 def test_empty_dir(tmp_path: Path) -> None:
     assert find_active_run(root=tmp_path) is None
+
+
+def test_attaches_to_no_tail_run_with_session_end(tmp_path: Path) -> None:
+    """CLI --no-tail closes the logger, but the device keeps running."""
+    started = datetime.now(UTC) - timedelta(minutes=2)
+    p = tmp_path / "20260504T030000_notail.jsonl"
+    _write(
+        p,
+        [
+            {"type": "session_start", "session": "no-tail", "start_time": started.isoformat()},
+            {"type": "event", "event": "run_config", "data": {"profile": _profile().to_dict()}},
+            {"type": "event", "event": "run_started", "data": {"tail": False}},
+            {"type": "session_end", "duration_seconds": 1.2, "total_events": 4},
+        ],
+    )
+    active = find_active_run(root=tmp_path)
+    assert active is not None
+    assert active.profile.name == "orphan-demo"
