@@ -28,6 +28,7 @@ from .modals.splash import SplashModal
 from .services.session import Session
 from .widgets.device_list import DeviceList
 from .widgets.profile_list import ProfileList
+from .widgets.program_diagram import ProgramDiagram
 from .widgets.run_history import RunHistory
 from .widgets.status_pane import StatusPane
 from .widgets.temp_chart import TempChart
@@ -77,6 +78,8 @@ class BentoLabApp(App):
             with Vertical(id="right-column"):
                 self.status_pane = StatusPane()
                 yield self.status_pane
+                self.diagram = ProgramDiagram()
+                yield self.diagram
                 self.chart = TempChart()
                 yield self.chart
         yield Footer()
@@ -203,13 +206,18 @@ class BentoLabApp(App):
         self._current_profile = message.profile_name
         self._current_progress = 0
         self.status_pane.on_run_started(message)
+        self.diagram.set_profile(message.profile)
 
     def on_run_progressed(self, message: RunProgressed) -> None:
         self._current_progress = message.state.progress
         self.status_pane.on_run_progressed(message)
+        if self.status_pane._active_profile is not None:
+            stage = self.status_pane._active_profile.stage_at(message.state.elapsed_seconds)
+            self.diagram.update_stage(stage)
 
     def on_run_finished(self, message: RunFinished) -> None:
         self.status_pane.on_run_finished(message)
+        self.diagram.update_stage(None)
 
     def on_profiles_changed(self, _message: ProfilesChanged) -> None:
         self.profile_list.refresh_list()

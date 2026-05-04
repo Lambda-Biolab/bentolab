@@ -56,3 +56,16 @@ def test_final_extension() -> None:
 def test_hold_after_program() -> None:
     s = _profile().stage_at(60.0 + 300.0 + 30.0 + 1.0)
     assert s.phase == "hold"
+
+
+def test_setpoint_and_remaining_in_anneal() -> None:
+    # Cycle 2 anneal, 5s in (anneal is 30s).
+    s = _profile().stage_at(60.0 + 100.0 + 10.0 + 5.0)
+    assert s.setpoint == 60.0
+    assert 24.0 <= s.seconds_remaining <= 25.0
+
+
+def test_setpoint_in_initial_phase() -> None:
+    s = _profile().stage_at(0.0)
+    assert s.setpoint == 95.0
+    assert s.seconds_remaining == 60.0
