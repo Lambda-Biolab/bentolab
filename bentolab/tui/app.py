@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -84,6 +85,7 @@ class BentoLabApp(App):
     # Actions
     # ------------------------------------------------------------------
 
+    @work
     async def action_connect(self) -> None:
         if self.session.connected:
             self.notify("Already connected.")
@@ -103,6 +105,7 @@ class BentoLabApp(App):
     async def action_disconnect(self) -> None:
         await self.session.disconnect()
 
+    @work
     async def action_run(self) -> None:
         if self._is_running:
             self.notify("A run is already in progress.")
@@ -153,6 +156,7 @@ class BentoLabApp(App):
         self.profile_list.refresh_list()
         self.history.refresh_list()
 
+    @work
     async def action_quit_workbench(self) -> None:
         if not self._is_running:
             self.exit()
