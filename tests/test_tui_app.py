@@ -72,8 +72,31 @@ async def test_status_message_updates_pane(data_dir: Path) -> None:
             )
         )
         await pilot.pause()
-        # We only check the widget didn't crash and we have at least one sample.
+        # Chart records a sample.
         assert len(app.chart._samples) == 1
+        # With no profile context, status pane reports running-from-device.
+        assert "running" in str(app.status_pane._stage_label.render()).lower()
+
+
+async def test_status_idle_when_running_zero(data_dir: Path) -> None:
+    app = BentoLabApp(show_splash=False)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.post_message(
+            StatusUpdated(
+                status=StatusBroadcast(
+                    running=0,
+                    field2=0,
+                    field3=0,
+                    field4=0,
+                    block_temperature=20,
+                    lid_temperature=22,
+                    field7=0,
+                )
+            )
+        )
+        await pilot.pause()
+        assert "idle" in str(app.status_pane._stage_label.render()).lower()
 
 
 async def test_run_started_progress_then_finished(data_dir: Path) -> None:

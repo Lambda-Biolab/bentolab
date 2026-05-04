@@ -63,6 +63,16 @@ class StatusPane(Vertical):
         self._block = f"{s.block_temperature}°C"
         self._lid = f"{s.lid_temperature}°C"
         self._temps.update(f"Block    {self._block}      Lid    {self._lid}")
+        # When this TUI didn't start the run, we have no profile context
+        # to compute stage_at(); fall back to the device's running byte
+        # so the operator at least knows the device is busy.
+        if self._active_profile is None:
+            if s.running == 0:
+                self._stage_label.update("Stage    idle")
+            else:
+                self._stage_label.update(
+                    f"Stage    running (state={s.running}, started outside session)"
+                )
 
     def on_run_started(self, message: RunStarted) -> None:
         self._active_profile = message.profile
