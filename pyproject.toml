@@ -5,11 +5,14 @@ description = "Python control library for Bento Lab PCR workstations"
 requires-python = ">=3.11"
 dependencies = [
     "bleak>=0.22.0",
+    "platformdirs>=4.0",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+    "typer>=0.12",
 ]
 
 [project.optional-dependencies]
 tools = [
-    "rich>=13.0.0",
     "construct>=2.10.0",
     "zeroconf>=0.80.0",
     "pyshark>=0.6.0",
@@ -17,6 +20,9 @@ tools = [
     "aiohttp>=3.9.0",
     "prompt-toolkit>=3.0.0",
 ]
+
+[project.scripts]
+bentolab = "bentolab.cli.main:main"
 
 [dependency-groups]
 dev = [
@@ -62,3 +68,6 @@ exclude = [
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bentolab*"]
