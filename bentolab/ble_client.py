@@ -452,12 +452,20 @@ class BentoLabBLE:
         cycles: list[tuple[int, int, int]] | None = None,
         lid_temp: float = 110.0,
         poll_interval: float = 5.0,
+        startup_grace_seconds: float = 120.0,
+        completion_confirmations: int = 3,
     ) -> AsyncIterator[PCRRunState]:
         """Run a PCR program and yield status updates until completion.
 
         This is the high-level API for running PCR with progress tracking.
         Yields PCRRunState objects at each poll interval until the run
         completes or is stopped.
+
+        Termination requires *either* progress >= 99% OR
+        ``completion_confirmations`` consecutive ``running=False`` polls
+        after ``startup_grace_seconds`` has elapsed. This avoids exiting
+        on transient ``running=False`` flips that the device emits during
+        the lid-heat / pre-cycle ramp before stage 1 reaches setpoint.
 
         Usage::
 
@@ -473,10 +481,16 @@ class BentoLabBLE:
             cycles: List of (from_stage, to_stage, num_cycles).
             lid_temp: Lid temperature in Celsius.
             poll_interval: Seconds between status polls.
+            startup_grace_seconds: Ignore ``running=False`` for this long
+                after starting, to ride out the lid-heat ramp.
+            completion_confirmations: Number of consecutive ``running=False``
+                polls (after the grace period) required to declare done.
         """
         await self.start_run(name=name, stages=stages, cycles=cycles, lid_temp=lid_temp)
 
         elapsed = 0.0
+        consecutive_not_running = 0
+        peak_progress = 0
         while True:
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
@@ -490,6 +504,8 @@ class BentoLabBLE:
                 running = bool(status.running)
                 progress = 0
 
+            peak_progress = max(peak_progress, progress)
+
             state = PCRRunState(
                 running=running,
                 progress=progress,
@@ -499,8 +515,24 @@ class BentoLabBLE:
             )
             yield state
 
-            if not running:
-                logger.info("PCR run completed after %.0fs", elapsed)
+            if running:
+                consecutive_not_running = 0
+                continue
+
+            consecutive_not_running += 1
+
+            if peak_progress >= 99:
+                logger.info("PCR run completed after %.0fs (progress=%d)", elapsed, progress)
+                break
+            if (
+                elapsed >= startup_grace_seconds
+                and consecutive_not_running >= completion_confirmations
+            ):
+                logger.info(
+                    "PCR run completed after %.0fs (%d consecutive idle polls)",
+                    elapsed,
+                    consecutive_not_running,
+                )
                 break
 
     # ------------------------------------------------------------------
