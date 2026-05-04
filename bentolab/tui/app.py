@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import UTC, datetime
 from pathlib import Path
 
 from textual import work
@@ -25,6 +26,7 @@ from .modals.confirm_quit import ConfirmQuitModal, QuitChoice
 from .modals.confirm_run import ConfirmRunModal
 from .modals.scan_modal import ScanModal
 from .modals.splash import SplashModal
+from .services.orphan_attach import find_active_run
 from .services.session import Session
 from .widgets.device_list import DeviceList
 from .widgets.profile_list import ProfileList
@@ -196,8 +198,37 @@ class BentoLabApp(App):
     # ------------------------------------------------------------------
 
     def on_status_updated(self, message: StatusUpdated) -> None:
+        self._maybe_attach_orphan(message)
         self.status_pane.on_status_updated(message)
         self.chart.on_status_updated(message)
+        self._refresh_external_diagram()
+
+    def _maybe_attach_orphan(self, message: StatusUpdated) -> None:
+        """Attach to a CLI- or externally-started run, if one is in flight."""
+        if self._is_running:
+            return
+        if self.status_pane._active_profile is not None:
+            return
+        if message.status.running == 0:
+            return
+        active = find_active_run()
+        if active is None:
+            return
+        self.status_pane.attach_external_run(active.profile, active.started_at)
+        self.diagram.set_profile(active.profile)
+        self._current_profile = active.profile.name
+        self.notify(
+            f"Attached to in-flight run: {active.profile.name}",
+            severity="information",
+            timeout=4.0,
+        )
+
+    def _refresh_external_diagram(self) -> None:
+        pane = self.status_pane
+        if pane._active_profile is None or pane._external_started_at is None:
+            return
+        elapsed = (datetime.now(UTC) - pane._external_started_at).total_seconds()
+        self.diagram.update_stage(pane._active_profile.stage_at(elapsed))
 
     def on_connection_changed(self, message: ConnectionChanged) -> None:
         self.status_pane.on_connection_changed(message)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Label, ProgressBar, Static
@@ -36,6 +38,20 @@ class StatusPane(Vertical):
         self._progress = 0
         self._connected_str = "[grey50]disconnected[/]"
         self._active_profile: PCRProfile | None = None
+        self._external_started_at: datetime | None = None
+
+    def attach_external_run(self, profile: PCRProfile, started_at: datetime) -> None:
+        """Attach to a run started outside this TUI session (e.g. CLI)."""
+        self._active_profile = profile
+        self._external_started_at = started_at
+        self._profile_name = profile.name
+        self._profile.update(f"Profile  {self._profile_name}  [dim](external)[/]")
+
+    def detach_external_run(self) -> None:
+        self._active_profile = None
+        self._external_started_at = None
+        self._profile_name = "—"
+        self._profile.update(f"Profile  {self._profile_name}")
 
     def compose(self) -> ComposeResult:
         yield Label("Live Status", classes="title")
@@ -63,16 +79,24 @@ class StatusPane(Vertical):
         self._block = f"{s.block_temperature}°C"
         self._lid = f"{s.lid_temperature}°C"
         self._temps.update(f"Block    {self._block}      Lid    {self._lid}")
-        # When this TUI didn't start the run, we have no profile context
-        # to compute stage_at(); fall back to the device's running byte
-        # so the operator at least knows the device is busy.
         if self._active_profile is None:
+            self._stage_label.update(
+                "Stage    idle"
+                if s.running == 0
+                else f"Stage    running (state={s.running}, started outside session)"
+            )
+            return
+        # Attached to an external run: compute stage from wall-clock elapsed.
+        # Locally-started runs are driven by RunProgressed instead.
+        if self._external_started_at is not None:
             if s.running == 0:
+                self.detach_external_run()
                 self._stage_label.update("Stage    idle")
-            else:
-                self._stage_label.update(
-                    f"Stage    running (state={s.running}, started outside session)"
-                )
+                return
+            elapsed = (datetime.now(UTC) - self._external_started_at).total_seconds()
+            stage = self._active_profile.stage_at(elapsed)
+            self._stage = stage.label
+            self._stage_label.update(f"Stage    {stage.label}")
 
     def on_run_started(self, message: RunStarted) -> None:
         self._active_profile = message.profile
@@ -94,5 +118,6 @@ class StatusPane(Vertical):
 
     def on_run_finished(self, message: RunFinished) -> None:
         self._active_profile = None
+        self._external_started_at = None
         self._stage = "complete" if message.success else "stopped"
         self._stage_label.update(f"Stage    {self._stage}")
