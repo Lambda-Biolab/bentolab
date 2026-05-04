@@ -122,9 +122,13 @@ class TempChart(Widget):
     DEFAULT_CSS = """
     TempChart {
         height: 1fr;
-        min-height: 8;
+        min-height: 10;
+        border: round $accent;
+        padding: 0 1;
     }
     """
+
+    BORDER_TITLE = "Temp curve"
 
     def __init__(self, window_seconds: float = 480.0) -> None:
         super().__init__()
@@ -165,11 +169,15 @@ class TempChart(Widget):
         for block_row, lid_row in rows:
             for ch_b, ch_l in zip(block_row, lid_row, strict=True):
                 if ch_b != chr(_BRAILLE_BASE):
-                    out.append(ch_b, style="bold cyan")
+                    out.append(ch_b, style="bright_cyan")
                 elif ch_l != chr(_BRAILLE_BASE):
-                    out.append(ch_l, style="bold magenta")
+                    out.append(ch_l, style="bright_magenta")
                 else:
                     out.append(" ")
             out.append("\n")
-        out.append(f"  block (cyan)   lid (magenta)   range {y_min:.0f}–{y_max:.0f}°C", style="dim")
+        legend = Text.from_markup(
+            f"  [bright_cyan]●[/] block   [bright_magenta]●[/] lid   "
+            f"[dim]range {y_min:.0f}–{y_max:.0f}°C[/]"
+        )
+        out.append(legend)
         return out

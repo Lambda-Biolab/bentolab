@@ -29,21 +29,28 @@ class SplashModal(ModalScreen[None]):
         background: $surface;
         border: thick $accent;
         padding: 1 2;
-        width: auto;
+        width: 104;
         height: auto;
+        max-height: 90%;
     }
     SplashModal Static.art {
+        width: 100;
+        height: auto;
         color: $accent;
+        text-align: left;
     }
     SplashModal Static.tagline {
+        width: 100;
         color: $text;
         text-align: center;
         margin: 1 0 0 0;
     }
     SplashModal Static.keys {
+        width: 100;
         margin: 1 0 0 0;
     }
     SplashModal Static.hint {
+        width: 100;
         color: $text-muted;
         text-align: center;
         margin: 1 0 0 0;
@@ -52,7 +59,7 @@ class SplashModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Static(bento_art(), classes="art")
+            yield Static(bento_art(), classes="art", markup=False)
             yield Static("[bold]Bento Lab Workbench[/]", classes="tagline")
             yield Static(_KEYS, classes="keys")
             yield Static("press any key to continue", classes="hint")
