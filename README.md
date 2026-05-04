@@ -54,7 +54,45 @@ async def main():
     print(f"Cycle {state.current_cycle}/{state.total_cycles} @ {state.block_temperature}C")
 ```
 
-## Tools
+## Command-line interface
+
+`bentolab` ships a Typer CLI that subsumes the one-off scripts in `tools/`.
+Profiles live as YAML in the platform user-data directory; runs are recorded
+as NDJSON in the same tree (or override with `BENTOLAB_DATA_DIR`).
+
+```bash
+bentolab scan                           # discover devices
+bentolab status                         # one snapshot
+bentolab monitor                        # live tail of status broadcasts
+bentolab profile new my-profile         # opens $EDITOR on a YAML template
+bentolab profile list
+bentolab profile import path/to/x.yaml
+bentolab run my-profile                 # uploads + starts + tails until done
+bentolab stop                           # abort the current run
+bentolab logs list
+bentolab logs show <run-id>
+```
+
+Profile YAML:
+
+```yaml
+name: HF-Pgl3-EGFP-Puro-linear
+lid_temperature: 110
+initial_denaturation: { temperature: 95, duration: 300 }
+cycles:
+  - repeat: 35
+    denaturation: { temperature: 98, duration: 10 }
+    annealing:    { temperature: 60, duration: 30 }
+    extension:    { temperature: 72, duration: 150 }
+final_extension:  { temperature: 72, duration: 300 }
+hold_temperature: 4
+notes: ""
+```
+
+Every subcommand accepts `--json` for machine-readable output. Exit codes:
+`0` ok, `2` user error, `3` device error, `4` aborted.
+
+## Tools (low-level / RE debug)
 
 | Tool | Purpose |
 |------|---------|
@@ -63,7 +101,10 @@ async def main():
 | `tools/ble_commander.py` | Interactive BLE command REPL with fuzzing |
 | `tools/wifi_scanner.py` | mDNS/nmap discovery for Wi-Fi unit |
 | `tools/wifi_monitor.py` | Passive TCP traffic capture |
-| `tools/session_logger.py` | Record BLE sessions to JSONL |
+| `tools/session_logger.py` | Compatibility shim — re-exports `bentolab._logging.SessionLogger` |
+
+For day-to-day operation use the `bentolab` CLI above; the scripts in
+`tools/` are kept for protocol-decoding work.
 
 ## Quick Start
 
