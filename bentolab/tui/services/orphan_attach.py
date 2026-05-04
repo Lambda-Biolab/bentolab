@@ -28,28 +28,40 @@ class ActiveRun:
     log_path: Path
 
 
+_RAMP_BUFFER_SECONDS = 1800.0  # 30 min headroom past nominal program runtime
+
+
 def find_active_run(
     *,
     root: Path | None = None,
     now: datetime | None = None,
-    max_age_hours: float = 12.0,
+    max_age_hours: float = 6.0,
 ) -> ActiveRun | None:
     """Return the most-recent in-flight run, or ``None``.
 
-    "In flight" = the NDJSON file's last event isn't ``run_finished``,
-    and ``session_start`` is within ``max_age_hours`` of ``now`` (default
-    12 h, longer than any reasonable PCR program).
+    A candidate qualifies when the NDJSON file:
+      * has a ``session_start`` within ``max_age_hours`` (default 6 h),
+      * contains a ``run_config`` event so we know the profile,
+      * contains a ``run_started`` event so we know the device-side
+        start command actually went through (filters out failed
+        connect attempts that left a stub log behind),
+      * does not yet contain ``run_finished``,
+      * and the elapsed time since ``session_start`` is still less than
+        the profile's nominal runtime plus a 30-minute ramp buffer
+        (anything older is by definition no longer the current run on
+        the device, even if ``run_finished`` was never logged).
     """
     base = root or runs_dir()
-    cutoff = (now or datetime.now(UTC)) - timedelta(hours=max_age_hours)
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(hours=max_age_hours)
     for path in sorted(base.glob("*.jsonl"), reverse=True):
-        active = _try_parse(path, cutoff)
+        active = _try_parse(path, cutoff=cutoff, now=now)
         if active is not None:
             return active
     return None
 
 
-def _try_parse(path: Path, cutoff: datetime) -> ActiveRun | None:
+def _try_parse(path: Path, *, cutoff: datetime, now: datetime) -> ActiveRun | None:
     rows = _read_rows(path)
     if rows is None:
         return None
@@ -57,16 +69,24 @@ def _try_parse(path: Path, cutoff: datetime) -> ActiveRun | None:
     started = summary["started"]
     if started is None or started < cutoff:
         return None
-    # `run_finished` is the only signal that the device-side run is done.
-    # `session_end` only means our logger closed (e.g. CLI --no-tail) —
-    # the device may still be cycling, so don't treat it as terminated.
     if summary["last_event"] == "run_finished":
+        # run_finished is the only definitive end signal. session_end on
+        # its own (e.g. CLI --no-tail) doesn't mean the device stopped.
+        return None
+    if not summary["saw_run_started"]:
+        # Stub logs from failed connect attempts have run_config but
+        # never reached run_started. They aren't actual in-flight runs.
         return None
     if summary["profile_dict"] is None:
         return None
     try:
         profile = PCRProfile.from_dict(summary["profile_dict"])
     except (ValueError, TypeError, KeyError):
+        return None
+    elapsed = (now - started).total_seconds()
+    if elapsed > profile.estimated_runtime_seconds() + _RAMP_BUFFER_SECONDS:
+        # Run-time math says this log can't represent the program the
+        # device is currently executing. Skip it.
         return None
     return ActiveRun(profile=profile, started_at=started, log_path=path)
 
@@ -92,13 +112,16 @@ def _summarize_rows(rows: list[dict]) -> dict:
     profile_dict: dict | None = None
     last_event = ""
     last_type = ""
+    saw_run_started = False
     for entry in rows:
         last_type = entry.get("type", "")
         if last_type == "session_start":
             started = _parse_iso(entry.get("start_time", ""))
         elif last_type == "event":
             last_event = entry.get("event", "")
-            if last_event == "run_config":
+            if last_event == "run_started":
+                saw_run_started = True
+            elif last_event == "run_config":
                 cfg = entry.get("data") or {}
                 if isinstance(cfg.get("profile"), dict):
                     profile_dict = cfg["profile"]
@@ -107,6 +130,7 @@ def _summarize_rows(rows: list[dict]) -> dict:
         "profile_dict": profile_dict,
         "last_event": last_event,
         "last_type": last_type,
+        "saw_run_started": saw_run_started,
     }
 
 

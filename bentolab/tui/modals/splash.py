@@ -6,7 +6,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
@@ -35,8 +35,6 @@ _KEYS = """\
   q   quit
 """
 
-_DISMISS_KEYS = {"escape", "enter", "space", "q"}
-
 
 class SplashModal(ModalScreen[None]):
     """Show the bento ASCII art and keybindings. Dismiss on any key."""
@@ -45,14 +43,13 @@ class SplashModal(ModalScreen[None]):
     SplashModal {
         align: center middle;
     }
-    SplashModal > VerticalScroll {
+    SplashModal > Vertical {
         background: $surface;
         border: thick $accent;
         padding: 1 2;
         width: 104;
         max-width: 100%;
         height: auto;
-        max-height: 90%;
     }
     SplashModal Static.header {
         width: 100;
@@ -78,18 +75,14 @@ class SplashModal(ModalScreen[None]):
     """
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll():
+        with Vertical():
             yield Static(_HEADER.format(version=_pkg_version()), classes="header")
             yield Static(bento_art(), classes="art", markup=False)
             yield Static(_KEYS, classes="keys")
-            yield Static("scroll to see keys • Esc / Enter / q to dismiss", classes="hint")
+            yield Static("press any key to dismiss", classes="hint")
 
-    def on_key(self, event: events.Key) -> None:
-        # Let arrow / page keys scroll the content; only dismiss on the
-        # explicit close keys.
-        if event.key in _DISMISS_KEYS:
-            event.stop()
-            self.dismiss(None)
+    def on_key(self, _event: events.Key) -> None:
+        self.dismiss(None)
 
     def on_click(self) -> None:
         self.dismiss(None)

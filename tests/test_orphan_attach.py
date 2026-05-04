@@ -71,7 +71,41 @@ def test_skips_stale_run(tmp_path: Path) -> None:
         [
             {"type": "session_start", "session": "stale", "start_time": started.isoformat()},
             {"type": "event", "event": "run_config", "data": {"profile": _profile().to_dict()}},
+            {"type": "event", "event": "run_started"},
             {"type": "event", "event": "run_progress"},
+        ],
+    )
+    assert find_active_run(root=tmp_path) is None
+
+
+def test_skips_log_past_estimated_runtime(tmp_path: Path) -> None:
+    """Even within max_age, an orphan whose elapsed exceeds the program
+    runtime + ramp buffer can't be the run currently on the device."""
+    profile = _profile()
+    runtime = profile.estimated_runtime_seconds()
+    started = datetime.now(UTC) - timedelta(seconds=runtime + 3600)  # 1h past buffer
+    p = tmp_path / "20260504T010000_old.jsonl"
+    _write(
+        p,
+        [
+            {"type": "session_start", "session": "old", "start_time": started.isoformat()},
+            {"type": "event", "event": "run_config", "data": {"profile": profile.to_dict()}},
+            {"type": "event", "event": "run_started"},
+        ],
+    )
+    assert find_active_run(root=tmp_path) is None
+
+
+def test_skips_log_with_run_config_but_no_run_started(tmp_path: Path) -> None:
+    """Failed-connect attempts log run_config but never reach run_started."""
+    started = datetime.now(UTC) - timedelta(minutes=1)
+    p = tmp_path / "20260504T030000_failed.jsonl"
+    _write(
+        p,
+        [
+            {"type": "session_start", "session": "failed", "start_time": started.isoformat()},
+            {"type": "event", "event": "run_config", "data": {"profile": _profile().to_dict()}},
+            {"type": "session_end", "duration_seconds": 0.2, "total_events": 2},
         ],
     )
     assert find_active_run(root=tmp_path) is None
@@ -91,7 +125,7 @@ def test_skips_run_without_config(tmp_path: Path) -> None:
 
 
 def test_picks_most_recent_when_multiple_orphans(tmp_path: Path) -> None:
-    older = datetime.now(UTC) - timedelta(hours=2)
+    older = datetime.now(UTC) - timedelta(minutes=30)
     newer = datetime.now(UTC) - timedelta(minutes=10)
     for ts, name in [(older, "older"), (newer, "newer")]:
         path = tmp_path / f"{ts.strftime('%Y%m%dT%H%M%S')}_{name}.jsonl"
@@ -104,6 +138,7 @@ def test_picks_most_recent_when_multiple_orphans(tmp_path: Path) -> None:
                     "event": "run_config",
                     "data": {"profile": {**_profile().to_dict(), "name": name}},
                 },
+                {"type": "event", "event": "run_started"},
                 {"type": "event", "event": "run_progress"},
             ],
         )
