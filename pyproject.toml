@@ -8,6 +8,7 @@ dependencies = [
     "platformdirs>=4.0",
     "pyyaml>=6.0",
     "rich>=13.0.0",
+    "textual>=0.79",
     "typer>=0.12",
 ]
 
@@ -71,3 +72,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["bentolab*"]
+
+[tool.setuptools.package-data]
+"bentolab.tui" = ["style.tcss", "asci-art/*.txt"]

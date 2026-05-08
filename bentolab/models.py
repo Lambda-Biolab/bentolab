@@ -31,6 +31,18 @@ class ThermalStep:
 
 
 @dataclass
+class StageInfo:
+    """Where the device is in a profile, derived from elapsed time."""
+
+    label: str
+    phase: str  # "initial", "denat", "anneal", "extend", "final", "hold"
+    cycle: int
+    total_cycles: int
+    setpoint: float  # current step's target temperature, °C
+    seconds_remaining: float  # seconds left in the current step
+
+
+@dataclass
 class CycleStep:
     """One cycle of denaturation -> annealing -> extension."""
 
@@ -110,6 +122,82 @@ class PCRProfile:
         stages.append((self.final_extension.temperature, self.final_extension.duration))
         return stages, cycles
 
+    def total_cycle_count(self) -> int:
+        return sum(c.repeat_count for c in self.cycles)
+
+    def stage_at(self, elapsed_seconds: float) -> StageInfo:
+        """Return what stage the run is in at ``elapsed_seconds``.
+
+        Computed by walking the cumulative durations declared on the
+        profile. Doesn't account for ramp time, so the device may lag
+        the computed label by a few seconds during transitions.
+        """
+        total = self.total_cycle_count()
+        t = float(elapsed_seconds)
+
+        init = self.initial_denaturation
+        if t < init.duration:
+            return StageInfo(
+                label=f"initial denaturation {init.temperature:.0f}°C",
+                phase="initial",
+                cycle=0,
+                total_cycles=total,
+                setpoint=init.temperature,
+                seconds_remaining=init.duration - t,
+            )
+        t -= init.duration
+
+        info = self._stage_in_cycles(t, total_cycles=total)
+        if info is not None:
+            return info
+        # Fall through: t was decremented inside _stage_in_cycles too.
+        t = self._after_cycles_elapsed(elapsed_seconds)
+
+        final = self.final_extension
+        if t < final.duration:
+            return StageInfo(
+                label=f"final extension {final.temperature:.0f}°C",
+                phase="final",
+                cycle=total,
+                total_cycles=total,
+                setpoint=final.temperature,
+                seconds_remaining=final.duration - t,
+            )
+        return StageInfo(
+            label="hold",
+            phase="hold",
+            cycle=total,
+            total_cycles=total,
+            setpoint=self.hold_temperature,
+            seconds_remaining=0.0,
+        )
+
+    def _stage_in_cycles(self, t: float, *, total_cycles: int) -> StageInfo | None:
+        cycle_offset = 0
+        for cycle in self.cycles:
+            per_cycle = (
+                cycle.denaturation.duration + cycle.annealing.duration + cycle.extension.duration
+            )
+            block_total = per_cycle * cycle.repeat_count
+            if t < block_total:
+                iter_idx = int(t // per_cycle)
+                cycle_num = cycle_offset + iter_idx + 1
+                within = t - iter_idx * per_cycle
+                return _cycle_stage_info(cycle, cycle_num, total_cycles, within)
+            t -= block_total
+            cycle_offset += cycle.repeat_count
+        return None
+
+    def _after_cycles_elapsed(self, elapsed_seconds: float) -> float:
+        """Return seconds elapsed past the cycle block, for final-stage math."""
+        spent = self.initial_denaturation.duration
+        for cycle in self.cycles:
+            per_cycle = (
+                cycle.denaturation.duration + cycle.annealing.duration + cycle.extension.duration
+            )
+            spent += per_cycle * cycle.repeat_count
+        return max(0.0, elapsed_seconds - spent)
+
     def estimated_runtime_seconds(self) -> int:
         """Sum of step durations across the program (excludes ramp time)."""
         total = self.initial_denaturation.duration
@@ -187,6 +275,40 @@ class PCRProfile:
     @classmethod
     def from_yaml_file(cls, path: Path) -> PCRProfile:
         return cls.from_yaml(Path(path).read_text(encoding="utf-8"))
+
+
+def _cycle_stage_info(
+    cycle: CycleStep, cycle_num: int, total_cycles: int, within: float
+) -> StageInfo:
+    if within < cycle.denaturation.duration:
+        denat_temp = cycle.denaturation.temperature
+        return StageInfo(
+            label=f"cycle {cycle_num}/{total_cycles} — denat {denat_temp:.0f}°C",
+            phase="denat",
+            cycle=cycle_num,
+            total_cycles=total_cycles,
+            setpoint=cycle.denaturation.temperature,
+            seconds_remaining=cycle.denaturation.duration - within,
+        )
+    within -= cycle.denaturation.duration
+    if within < cycle.annealing.duration:
+        return StageInfo(
+            label=f"cycle {cycle_num}/{total_cycles} — anneal {cycle.annealing.temperature:.0f}°C",
+            phase="anneal",
+            cycle=cycle_num,
+            total_cycles=total_cycles,
+            setpoint=cycle.annealing.temperature,
+            seconds_remaining=cycle.annealing.duration - within,
+        )
+    within -= cycle.annealing.duration
+    return StageInfo(
+        label=f"cycle {cycle_num}/{total_cycles} — extend {cycle.extension.temperature:.0f}°C",
+        phase="extend",
+        cycle=cycle_num,
+        total_cycles=total_cycles,
+        setpoint=cycle.extension.temperature,
+        seconds_remaining=cycle.extension.duration - within,
+    )
 
 
 def _step_to_dict(step: ThermalStep) -> dict[str, Any]:
