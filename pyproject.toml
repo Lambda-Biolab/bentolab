@@ -46,13 +46,14 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C90"]
+select = ["E", "F", "I", "UP", "B", "S", "SIM", "C90"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-"tools/*" = ["C901"]
+"tools/*" = ["C901", "S603", "S607"]  # complexity (TODO: refactor 9 fns), intentional subprocess
+"tests/*" = ["S101"]  # pytest requires assert
 
 [tool.pyright]
 pythonVersion = "3.11"
