@@ -102,10 +102,16 @@ class BentoLabBLE:
         address: str | None = None,
         name_filter: str = r"(?i)bento",
         auto_reconnect: bool = True,
+        keep_alive_seconds: float = 30.0,
     ):
         self.address = address
         self.name_filter = re.compile(name_filter)
         self.auto_reconnect = auto_reconnect
+        # Bento firmware appears to drop the BLE link after tens of
+        # seconds of application-layer silence even though the device is
+        # happily broadcasting status. Re-issuing the handshake on a
+        # timer keeps the connection up. Set 0 to disable.
+        self.keep_alive_seconds = keep_alive_seconds
         self._client: BleakClient | None = None
         self._rx_buffer: list[dict] = []
         self._rx_event = asyncio.Event()
@@ -113,6 +119,7 @@ class BentoLabBLE:
         self._disconnect_callbacks: list[Callable[[], Any]] = []
         self._last_status: StatusBroadcast | None = None
         self._connected_address: str | None = None
+        self._keep_alive_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Notification handler
@@ -142,6 +149,9 @@ class BentoLabBLE:
         """Handle unexpected BLE disconnection."""
         logger.warning("BLE connection lost")
         self._client = None
+        if self._keep_alive_task is not None:
+            self._keep_alive_task.cancel()
+            self._keep_alive_task = None
         for cb in self._disconnect_callbacks:
             try:
                 cb()
@@ -250,6 +260,37 @@ class BentoLabBLE:
         # Send handshake and wait for first status
         await self._send("Xa")
         await asyncio.sleep(0.5)
+        self._start_keep_alive()
+
+    def _start_keep_alive(self) -> None:
+        if self.keep_alive_seconds <= 0:
+            return
+        if self._keep_alive_task is not None and not self._keep_alive_task.done():
+            return
+        self._keep_alive_task = asyncio.create_task(
+            self._keep_alive_loop(), name="bentolab-keep-alive"
+        )
+
+    async def _keep_alive_loop(self) -> None:
+        """Periodically poke the device so the firmware keeps the link.
+
+        Sends ``Xa`` (handshake / device-info request) on a fixed
+        cadence. The response goes through the same notification path
+        as any other reply; nothing here waits on it. If the write
+        fails the connection is already gone, so we just exit and let
+        the disconnect callback fire.
+        """
+        try:
+            while True:
+                await asyncio.sleep(self.keep_alive_seconds)
+                if not self.is_connected:
+                    return
+                try:
+                    await self._send("Xa")
+                except BentoLabConnectionError:
+                    return
+        except asyncio.CancelledError:
+            return
 
     async def reconnect(self) -> None:
         """Reconnect to the last known device."""
@@ -260,6 +301,11 @@ class BentoLabBLE:
 
     async def disconnect(self) -> None:
         """Disconnect from the device."""
+        if self._keep_alive_task is not None:
+            self._keep_alive_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._keep_alive_task
+            self._keep_alive_task = None
         if self._client and self._client.is_connected:
             with contextlib.suppress(BleakError):
                 await self._client.stop_notify(NUS_TX_CHAR_UUID)
