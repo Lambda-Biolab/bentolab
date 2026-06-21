@@ -34,7 +34,12 @@ analysis — no access controls are circumvented.
    — https://github.com/newren/git-filter-repo
    — https://rtyley.github.io/bfg-repo-cleaner/
 
-2. **Add a LICENSE file** — currently missing entirely. Recommended: MIT or
+2. ~~**Add a LICENSE file** — currently missing entirely. Recommended: MIT or~~
+   **DONE.** Apache License 2.0 with a `NOTICE` file. See `LICENSE` and `NOTICE`
+   at the repo root. Apache was preferred over MIT for the explicit patent
+   grant, retaliation clause, change-tracking requirement, and trademark scope
+   (Section 6) — all of which matter for a reverse-engineered library that
+   names third-party hardware. Original recommendation noted: MIT or
    Apache-2.0 for library code.
 
 ### Recommended

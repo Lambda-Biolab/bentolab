@@ -3,6 +3,8 @@ name = "bentolab"
 version = "0.1.0"
 description = "Python control library for Bento Lab PCR workstations"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "bleak>=0.22.0",
     "platformdirs>=4.0",

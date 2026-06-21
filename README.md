@@ -3,6 +3,11 @@
 [![CodeFactor](https://www.codefactor.io/repository/github/lambda-biolab/bentolab/badge)](https://www.codefactor.io/repository/github/lambda-biolab/bentolab)
 [![CodeQL](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml/badge.svg)](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml)
 [![Dependabot](https://img.shields.io/badge/dependabot-enabled-blue?logo=dependabot)](https://github.com/Lambda-Biolab/bentolab/network/updates)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+> ⚠️ **Unofficial.** This is a community-maintained library. It is not
+> affiliated with, endorsed by, or supported by Bento Bioworks Ltd. See
+> [Disclaimer](#disclaimer) and [`NOTICE`](NOTICE).
 
 Python control library for [Bento Lab](https://bento.bio/) PCR workstations
 (Bento Bioworks, London). Communicates over Bluetooth LE using the Nordic UART
@@ -128,7 +133,8 @@ python tools/ble_commander.py
 
 ## License
 
-[MIT](LICENSE).
+[Apache License 2.0](LICENSE) — see also [NOTICE](NOTICE) for attribution and
+the trademark / interoperability disclaimers that ship with every redistribution.
 
 ## Disclaimer
 
