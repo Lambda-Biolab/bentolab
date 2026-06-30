@@ -11,7 +11,7 @@ import logging
 from typing import Any, Protocol
 
 import fastapi
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from bentolab import __version__
@@ -21,20 +21,31 @@ from bentolab.protocol import StatusBroadcast
 from .models import (
     DeviceInfo,
     DevicesResponse,
+    DryRunRequest,
+    DryRunResponse,
+    DryRunSimulation,
+    DryRunStep,
     ErrorResponse,
     HealthResponse,
     ProfileValidationRequest,
     ProfileValidationResponse,
+    RunAbortResponse,
+    RunAcceptedResponse,
+    RunProgressInfo,
+    RunRequest,
+    RunResultResponse,
     RunStateInfo,
+    RunStatusDetailResponse,
     StatusError,
     StatusResponse,
     TemperatureSnapshot,
 )
+from .runs import RunManager, RunStates
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# BLE client protocol — the API depends on this, not on concrete classes
+# BLE client protocol -- the API depends on this, not on concrete classes
 # ---------------------------------------------------------------------------
 
 
@@ -56,6 +67,30 @@ class BleClientProtocol(Protocol):
     @property
     def is_connected(self) -> bool:
         """Whether a device is currently connected."""
+        ...
+
+    async def start_run(self, profile: PCRProfile) -> None:
+        """Start a PCR run with the given profile.
+
+        Converts the high-level PCRProfile into stage/cycle tuples and
+        sends the start command to the device.  Does not block until
+        completion -- use get_run_status() to poll.
+        """
+        ...
+
+    async def abort_run(self) -> None:
+        """Abort the currently running PCR program on the device."""
+        ...
+
+    async def get_run_status(self) -> dict[str, Any]:
+        """Poll the current run status from the device.
+
+        Returns a dict with at least:
+            running (bool)
+            progress (int)
+            block_temperature (float)
+            lid_temperature (float)
+        """
         ...
 
 
@@ -172,7 +207,7 @@ def _status_to_state_name(status: StatusBroadcast) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Helpers to extract the BLE client from the request
+# Helpers to extract BLE client / RunManager from the request
 # ---------------------------------------------------------------------------
 
 
@@ -181,13 +216,72 @@ def _get_ble(request: Request) -> BleClientProtocol | None:
     return getattr(request.app.state, "ble_client", None)
 
 
+def _get_run_manager(request: Request) -> RunManager:
+    """Retrieve the RunManager from app state."""
+    return getattr(request.app.state, "run_manager", RunManager())
+
+
 # ---------------------------------------------------------------------------
-# Endpoint handlers
+# Preflight  (C22 contract Preflight, lock, abort, and recovery)
+# ---------------------------------------------------------------------------
+
+
+async def _preflight(
+    ble: BleClientProtocol | None,
+    profile_dict: dict[str, Any],
+    device_address: str | None,
+    run_mgr: RunManager,
+) -> list[str]:
+    """Run hardware preflight checks.  Returns a list of error messages (empty = pass).
+
+    Checks (per contract):
+      1. BLE availability
+      2. Device reachability / connected
+      3. Device idle (not already running)
+      4. Profile compatible
+      5. Device lock available
+    """
+    errors: list[str] = []
+
+    # 1. BLE availability
+    if ble is None:
+        errors.append("BLE adapter not available")
+        return errors  # No point checking further without BLE
+
+    # 2. Device connected
+    if not ble.is_connected:
+        errors.append("Device not connected")
+
+    # 3. Device idle
+    try:
+        status = await ble.get_status()
+        if status.running:
+            errors.append("Device is already running a job")
+    except Exception:
+        errors.append("Failed to query device status")
+
+    # 4. Profile compatible
+    ok, profile_errors, _warnings = _validate_profile(profile_dict)
+    if not ok:
+        errors.extend(profile_errors)
+
+    # 5. Device lock available
+    lock_ok, held_by = run_mgr.check_lock_available()
+    if not lock_ok:
+        errors.append(
+            f"Device is busy with run {held_by} -- wait for it to finish or force-release"
+        )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# Endpoint handlers -- read / status
 # ---------------------------------------------------------------------------
 
 
 async def _health(request: Request) -> HealthResponse:
-    """GET /health — never requires hardware."""
+    """GET /health -- never requires hardware."""
     ble = _get_ble(request)
     ble_status: str
     if ble is None:
@@ -208,7 +302,7 @@ async def _health(request: Request) -> HealthResponse:
 
 
 async def _devices(request: Request) -> DevicesResponse:
-    """GET /devices — discover BentoLab devices via BLE scan."""
+    """GET /devices -- discover BentoLab devices via BLE scan."""
     ble = _get_ble(request)
     if ble is None:
         return DevicesResponse(devices=[])
@@ -224,7 +318,7 @@ async def _devices(request: Request) -> DevicesResponse:
 
 
 async def _status(request: Request) -> StatusResponse:
-    """GET /status — current device state."""
+    """GET /status -- current device state."""
     ble = _get_ble(request)
     if ble is None or not ble.is_connected:
         return StatusResponse(state="disconnected")
@@ -256,10 +350,323 @@ async def _status(request: Request) -> StatusResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Endpoint handlers -- validation / simulation
+# ---------------------------------------------------------------------------
+
+
 async def _validate_profile_handler(body: ProfileValidationRequest) -> ProfileValidationResponse:
-    """POST /profiles/validate — validate a PCR profile without hardware."""
+    """POST /profiles/validate -- validate a PCR profile without hardware."""
     ok, errors, warnings = _validate_profile(body.profile)
     return ProfileValidationResponse(ok=ok, errors=errors, warnings=warnings)
+
+
+async def _dry_run(body: DryRunRequest) -> DryRunResponse:
+    """POST /runs/dry-run -- simulate a run without hardware."""
+    # 1. Validate the profile
+    ok, errors, warnings = _validate_profile(body.profile)
+    if not ok:
+        return DryRunResponse(ok=False, errors=errors)
+
+    # 2. Build PCRProfile for simulation
+    try:
+        profile = PCRProfile.from_dict(body.profile)
+    except (ValueError, KeyError, TypeError) as exc:
+        return DryRunResponse(ok=False, errors=[str(exc)])
+
+    total_duration = profile.estimated_runtime_seconds()
+
+    # 3. Build simulation steps
+    steps: list[DryRunStep] = []
+
+    # Initial denaturation
+    steps.append(
+        DryRunStep(
+            phase="initial_denaturation",
+            temperature=profile.initial_denaturation.temperature,
+            duration_s=profile.initial_denaturation.duration,
+        )
+    )
+
+    # Cycles
+    for i, cycle in enumerate(profile.cycles):
+        for _ in range(cycle.repeat_count):
+            steps.append(
+                DryRunStep(
+                    phase=f"cycle_{i}_denaturation",
+                    temperature=cycle.denaturation.temperature,
+                    duration_s=cycle.denaturation.duration,
+                )
+            )
+            steps.append(
+                DryRunStep(
+                    phase=f"cycle_{i}_annealing",
+                    temperature=cycle.annealing.temperature,
+                    duration_s=cycle.annealing.duration,
+                )
+            )
+            steps.append(
+                DryRunStep(
+                    phase=f"cycle_{i}_extension",
+                    temperature=cycle.extension.temperature,
+                    duration_s=cycle.extension.duration,
+                )
+            )
+
+    # Final extension
+    steps.append(
+        DryRunStep(
+            phase="final_extension",
+            temperature=profile.final_extension.temperature,
+            duration_s=profile.final_extension.duration,
+        )
+    )
+
+    return DryRunResponse(
+        ok=True,
+        simulation=DryRunSimulation(
+            duration_s=total_duration,
+            steps=steps,
+            warnings=warnings,
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Endpoint handlers -- execution (Tier 2)
+# ---------------------------------------------------------------------------
+
+
+async def _start_run(body: RunRequest, request: Request) -> RunAcceptedResponse:
+    """POST /runs -- start a real run (requires preflight + lock + approval)."""
+    ble = _get_ble(request)
+    run_mgr = _get_run_manager(request)
+
+    # --- Preflight ---
+    pf_errors = await _preflight(ble, body.profile, body.device_address, run_mgr)
+    if pf_errors:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "preflight_failed",
+                "severity": "error",
+                "human_message": "Preflight checks failed",
+                "operator_hint": "; ".join(pf_errors),
+                "retryable": True,
+                "details": {"errors": pf_errors},
+            },
+        )
+
+    # --- Approval check ---
+    if not body.approval_id:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "approval_required",
+                "severity": "error",
+                "human_message": "Approval ID is required to start a run",
+                "operator_hint": "Supply a gateway approval_id in the request body",
+                "retryable": True,
+                "details": {},
+            },
+        )
+
+    # --- Create run record (acquires lock) ---
+    run_id = run_mgr.create_run(
+        profile=body.profile,
+        device_address=body.device_address,
+        operator=body.operator,
+        approval_id=body.approval_id,
+    )
+
+    # --- Start on hardware ---
+    try:
+        profile = PCRProfile.from_dict(body.profile)
+        await ble.start_run(profile)
+        run_mgr.transition_to(run_id, RunStates.RUNNING)
+    except Exception as exc:
+        logger.exception("Failed to start run %s on hardware", run_id)
+        run_mgr.record_error(run_id, "run_start_failed", str(exc))
+        run_mgr.transition_to(run_id, RunStates.FAILED)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "run_start_failed",
+                "severity": "error",
+                "human_message": f"Failed to start run on hardware: {exc}",
+                "operator_hint": "Check BLE connection and device state, then retry",
+                "retryable": True,
+                "details": {"run_id": run_id},
+            },
+        ) from exc
+
+    run = run_mgr.get_run(run_id)
+    return RunAcceptedResponse(
+        ok=True,
+        run_id=run_id,
+        state=RunStates.RUNNING,
+        started_at=run["started_at"],
+    )
+
+
+async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDetailResponse:
+    """GET /runs/{id} -- get run state and progress."""
+    run_mgr = _get_run_manager(request)
+    run = run_mgr.get_run(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "run_not_found",
+                "severity": "error",
+                "human_message": f"Run {run_id} not found",
+                "operator_hint": "Check the run ID",
+                "retryable": False,
+                "details": {"run_id": run_id},
+            },
+        )
+
+    state = run["state"]
+    progress: RunProgressInfo | None = None
+    temperature: TemperatureSnapshot | None = None
+
+    # Poll hardware if run is active
+    if state in RunStates.ACTIVE:
+        ble = _get_ble(request)
+        if ble is not None and ble.is_connected:
+            try:
+                hw = await ble.get_run_status()
+                run_mgr.record_temperature(
+                    run_id, hw.get("block_temperature"), hw.get("lid_temperature")
+                )  # noqa: E501
+                progress = RunProgressInfo(
+                    progress=hw.get("progress", 0),
+                    elapsed_seconds=hw.get("elapsed_seconds", 0.0),
+                )
+            except Exception:
+                logger.debug("Could not poll hardware for run %s", run_id)
+
+    # Build temperature from latest log entry
+    if run["temperature_log"]:
+        last = run["temperature_log"][-1]
+        temperature = TemperatureSnapshot(
+            current=last.get("block"),
+            lid=last.get("lid"),
+            block=last.get("block"),
+        )
+
+    return RunStatusDetailResponse(
+        run_id=run_id,
+        state=state,
+        progress=progress,
+        temperature=temperature,
+        errors=[StatusError(**e) for e in run["error_log"]],
+    )
+
+
+async def _abort_run(run_id: str, request: Request) -> RunAbortResponse:
+    """POST /runs/{id}/abort -- abort a running job."""
+    run_mgr = _get_run_manager(request)
+    run = run_mgr.get_run(run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "run_not_found",
+                "severity": "error",
+                "human_message": f"Run {run_id} not found",
+                "operator_hint": "Check the run ID",
+                "retryable": False,
+                "details": {"run_id": run_id},
+            },
+        )
+
+    state = run["state"]
+
+    # Idempotent: already terminal -> return current state
+    if state in RunStates.TERMINAL:
+        return RunAbortResponse(
+            ok=True,
+            state=state,
+            aborted_at=run.get("aborted_at"),
+        )
+
+    # If not running/accepted, reject
+    if state not in RunStates.ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "cannot_abort",
+                "severity": "error",
+                "human_message": f"Cannot abort run in state {state}",
+                "operator_hint": "Only active runs can be aborted",
+                "retryable": False,
+                "details": {"run_id": run_id, "state": state},
+            },
+        )
+
+    # Try BLE abort
+    ble = _get_ble(request)
+    ble_ok = False
+    if ble is not None and ble.is_connected:
+        try:
+            await ble.abort_run()
+            ble_ok = True
+        except Exception:
+            logger.exception("BLE abort failed for run %s", run_id)
+
+    if ble_ok:
+        run_mgr.transition_to(run_id, RunStates.ABORTED)
+        logger.info("Run %s aborted by operator", run_id)
+    else:
+        # BLE unreachable after disconnect => mark for operator review
+        run_mgr.record_error(
+            run_id, "abort_ble_failed", "BLE abort failed -- device may be disconnected"
+        )  # noqa: E501
+        run_mgr.transition_to(run_id, RunStates.UNKNOWN_REVIEW)
+        logger.warning(
+            "Run %s -> unknown_requires_operator_review (BLE unreachable during abort)",
+            run_id,
+        )
+
+    updated = run_mgr.get_run(run_id)
+    return RunAbortResponse(
+        ok=True,
+        state=updated["state"],
+        aborted_at=updated.get("aborted_at"),
+    )
+
+
+async def _get_results(run_id: str, request: Request) -> RunResultResponse:
+    """GET /runs/{id}/results -- get terminal run results."""
+    run_mgr = _get_run_manager(request)
+    results = run_mgr.get_results(run_id)
+    if results is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "run_not_found",
+                "severity": "error",
+                "human_message": f"Run {run_id} not found",
+                "operator_hint": "Check the run ID",
+                "retryable": False,
+                "details": {"run_id": run_id},
+            },
+        )
+
+    return RunResultResponse(
+        run_id=results["run_id"],
+        state=results["state"],
+        profile=results["profile"],
+        temperature_log=results["temperature_log"],
+        started_at=results["started_at"],
+        completed_at=results["completed_at"],
+        aborted_at=results.get("aborted_at"),
+        operator=results["operator"],
+        approval_id=results["approval_id"],
+        errors=[StatusError(**e) for e in results["errors"]],
+        artifacts=results["artifacts"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +688,9 @@ def create_app(ble_client: BleClientProtocol | None = None) -> fastapi.FastAPI:
         description="HTTP wrapper around the BentoLab BLE control library",
     )
 
-    # Store the BLE client in app state so endpoint handlers can access it
+    # Store the BLE client and run manager in app state
     app.state.ble_client = ble_client  # type: ignore[attr-defined]
+    app.state.run_manager = RunManager()  # type: ignore[attr-defined]
 
     app.add_middleware(
         CORSMiddleware,
@@ -291,6 +699,7 @@ def create_app(ble_client: BleClientProtocol | None = None) -> fastapi.FastAPI:
         allow_headers=["*"],
     )
 
+    # Tier 1 -- read / status / validation
     app.add_api_route("/health", _health, methods=["GET"], response_model=HealthResponse)
     app.add_api_route("/devices", _devices, methods=["GET"], response_model=DevicesResponse)
     app.add_api_route("/status", _status, methods=["GET"], response_model=StatusResponse)
@@ -300,6 +709,43 @@ def create_app(ble_client: BleClientProtocol | None = None) -> fastapi.FastAPI:
         methods=["POST"],
         response_model=ProfileValidationResponse,
         responses={422: {"model": ErrorResponse}},
+    )
+
+    # Tier 2 -- execution
+    app.add_api_route(
+        "/runs/dry-run",
+        _dry_run,
+        methods=["POST"],
+        response_model=DryRunResponse,
+        responses={422: {"model": ErrorResponse}},
+    )
+    app.add_api_route(
+        "/runs",
+        _start_run,
+        methods=["POST"],
+        response_model=RunAcceptedResponse,
+        responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    )
+    app.add_api_route(
+        "/runs/{run_id}",
+        _get_run_status_handler,
+        methods=["GET"],
+        response_model=RunStatusDetailResponse,
+        responses={404: {"model": ErrorResponse}},
+    )
+    app.add_api_route(
+        "/runs/{run_id}/abort",
+        _abort_run,
+        methods=["POST"],
+        response_model=RunAbortResponse,
+        responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    )
+    app.add_api_route(
+        "/runs/{run_id}/results",
+        _get_results,
+        methods=["GET"],
+        response_model=RunResultResponse,
+        responses={404: {"model": ErrorResponse}},
     )
 
     return app

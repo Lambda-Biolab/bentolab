@@ -111,3 +111,111 @@ class ErrorResponse(BaseModel):
     operator_hint: str = ""
     retryable: bool = False
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Run execution
+# ---------------------------------------------------------------------------
+
+
+class RunRequest(BaseModel):
+    """Request body for POST /runs (start a real run)."""
+
+    profile: dict[str, Any] = Field(description="PCR profile as a JSON/YAML dict")
+    device_address: str | None = Field(default=None, description="BLE device address")
+    approval_id: str | None = Field(default=None, description="Gateway approval token ID")
+    operator: str | None = Field(default=None, description="Operator identifier")
+
+
+class DryRunRequest(BaseModel):
+    """Request body for POST /runs/dry-run."""
+
+    profile: dict[str, Any] = Field(description="PCR profile as a JSON/YAML dict")
+    device_address: str | None = Field(default=None, description="BLE device address")
+
+
+class DryRunStep(BaseModel):
+    """A single step in a dry-run simulation."""
+
+    phase: str = Field(description="Phase name (e.g. 'initial_denaturation')")
+    temperature: float = Field(description="Target temperature in Celsius")
+    duration_s: int = Field(description="Duration in seconds")
+
+
+class DryRunSimulation(BaseModel):
+    """Simulation result from a dry run."""
+
+    duration_s: int = Field(description="Total estimated duration in seconds")
+    steps: list[DryRunStep] = Field(description="Simulated steps")
+    warnings: list[str] = Field(default_factory=list, description="Validation warnings")
+
+
+class DryRunResponse(BaseModel):
+    """Response from POST /runs/dry-run."""
+
+    ok: bool
+    simulation: DryRunSimulation | None = None
+    errors: list[str] = Field(default_factory=list)
+
+
+class RunAcceptedResponse(BaseModel):
+    """Response from POST /runs when a run is accepted."""
+
+    ok: bool
+    run_id: str
+    state: str
+    started_at: str
+
+
+class RunAbortResponse(BaseModel):
+    """Response from POST /runs/{id}/abort."""
+
+    ok: bool
+    state: str
+    aborted_at: str | None = None
+
+
+class RunProgressInfo(BaseModel):
+    """Run progress information."""
+
+    progress: int = 0
+    elapsed_seconds: float = 0.0
+
+
+class RunStatusDetailResponse(BaseModel):
+    """Response from GET /runs/{id}."""
+
+    run_id: str
+    state: str
+    progress: RunProgressInfo | None = None
+    temperature: TemperatureSnapshot | None = None
+    errors: list[StatusError] = Field(default_factory=list)
+
+
+class TemperatureLogEntry(BaseModel):
+    """A single temperature snapshot in the run log."""
+
+    t: str = Field(description="ISO8601 timestamp")
+    block: float | None = None
+    lid: float | None = None
+
+
+class RunResultResponse(BaseModel):
+    """Terminal result package from GET /runs/{id}/results.
+
+    Available for all terminal states (completed, failed, aborted,
+    unknown_requires_operator_review). Returns state='running' if
+    the run is not yet complete.
+    """
+
+    run_id: str
+    state: str
+    profile: dict[str, Any] | None = None
+    temperature_log: list[TemperatureLogEntry] = Field(default_factory=list)
+    started_at: str | None = None
+    completed_at: str | None = None
+    aborted_at: str | None = None
+    operator: str | None = None
+    approval_id: str | None = None
+    errors: list[StatusError] = Field(default_factory=list)
+    artifacts: list[dict[str, Any]] = Field(default_factory=list)
