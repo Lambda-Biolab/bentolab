@@ -81,10 +81,7 @@ source = ["bentolab"]
 omit = ["bentolab/_data_dirs.py"]
 
 [tool.coverage.report]
-# TEMPORARY: drops to 75 during the TUI rollout (slice 6 adds ~600 LOC of
-# widget code exercised only by Pilot tests in slice 10). Restore to 80
-# before the TUI v2 PR merges — see PR description.
-fail_under = 75
+fail_under = 80
 show_missing = true
 skip_covered = false
 
