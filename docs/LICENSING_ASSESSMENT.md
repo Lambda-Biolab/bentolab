@@ -60,5 +60,5 @@ analysis — no access controls are circumvented.
 ## References
 
 - Bento Bioworks (vendor): https://bento.bio
-- Nordic UART Service spec: https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth_services/services/nus.html
+- Bluetooth SIG assigned numbers: https://www.bluetooth.com/specifications/assigned-numbers/
 - git-filter-repo: https://github.com/newren/git-filter-repo
