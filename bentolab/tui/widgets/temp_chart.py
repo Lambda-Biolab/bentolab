@@ -18,7 +18,15 @@ caller can colour the two series (block vs. lid) independently.
 
 from __future__ import annotations
 
+import time
+from collections import deque
 from dataclasses import dataclass
+
+from rich.console import RenderableType
+from rich.text import Text
+from textual.widget import Widget
+
+from ..messages import StatusUpdated
 
 
 @dataclass
@@ -100,19 +108,21 @@ def _braille_cell(bits: list[list[int]], cell_row: int, cell_col: int) -> str:
 
     Uses the canonical 8-dot braille pattern (U+2800 base code).
     """
-    _BRAILLE_BASE = 0x2800
-    _DOT_BITS = (
-        (0x01, 0x08),
-        (0x02, 0x10),
-        (0x04, 0x20),
-        (0x40, 0x80),
-    )
     code = _BRAILLE_BASE
     for dy in range(4):
         for dx in range(2):
             if bits[cell_row * 4 + dy][cell_col * 2 + dx]:
                 code |= _DOT_BITS[dy][dx]
     return chr(code)
+
+
+_BRAILLE_BASE = 0x2800
+_DOT_BITS = (
+    (0x01, 0x08),
+    (0x02, 0x10),
+    (0x04, 0x20),
+    (0x40, 0x80),
+)
 
 
 def _line(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
@@ -134,3 +144,68 @@ def _line(x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
         if e2 <= dx:
             err += dx
             y0 += sy
+
+
+class TempChart(Widget):
+    """Live temperature chart driven by :class:`StatusUpdated` messages."""
+
+    DEFAULT_CSS = """
+    TempChart {
+        height: 1fr;
+        min-height: 10;
+        border: round $accent;
+        padding: 0 1;
+    }
+    """
+
+    BORDER_TITLE = "Temp curve"
+
+    def __init__(self, window_seconds: float = 480.0) -> None:
+        super().__init__()
+        self.window_seconds = window_seconds
+        self._samples: deque[Sample] = deque(maxlen=2048)
+        self._t0: float | None = None
+
+    def on_status_updated(self, message: StatusUpdated) -> None:
+        now = time.monotonic()
+        if self._t0 is None:
+            self._t0 = now
+        self._samples.append(
+            Sample(
+                t=now - self._t0,
+                block=float(message.status.block_temperature),
+                lid=float(message.status.lid_temperature),
+            )
+        )
+        # Trim to window
+        cutoff = (now - self._t0) - self.window_seconds
+        while self._samples and self._samples[0].t < cutoff:
+            self._samples.popleft()
+        self.refresh()
+
+    def render(self) -> RenderableType:
+        width = max(self.size.width - 2, 2)
+        height = max(self.size.height - 1, 1)
+        samples = list(self._samples)
+        if not samples:
+            text = Text("(no samples yet \u2014 waiting for status broadcast)\n", style="dim")
+            return text
+        y_min = min(min(s.block for s in samples), min(s.lid for s in samples)) - 5
+        y_max = max(max(s.block for s in samples), max(s.lid for s in samples)) + 5
+        rows = render_braille_chart(samples, width=width, height=height, y_min=y_min, y_max=y_max)
+        out = Text()
+        for block_row, lid_row in rows:
+            for ch_b, ch_l in zip(block_row, lid_row, strict=True):
+                if ch_b != chr(_BRAILLE_BASE):
+                    out.append(ch_b, style="bright_cyan")
+                elif ch_l != chr(_BRAILLE_BASE):
+                    out.append(ch_l, style="bright_magenta")
+                else:
+                    out.append(" ")
+            out.append("\n")
+        legend = Text.from_markup(
+            f"  [bright_cyan]\u25cf[/] block   [bright_magenta]\u25cf[/] lid   "
+            f"[dim]range {y_min:.0f}\u2013{y_max:.0f}\u00b0C[/]"
+        )
+        out.append(legend)
+        return out
