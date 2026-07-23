@@ -187,6 +187,8 @@ async def test_run_profile_flattens_and_forwards(lab):
         (60.0, 20),
         (72.0, 40),
         (72.0, 180),
+        # Post-run hold stage emitted by to_stages_and_cycles (see #12).
+        (4.0, 86_400),
     ]
     assert captured["cycles"] == [(4, 2, 12)]
     assert captured["lid_temp"] == 108.0
@@ -232,6 +234,8 @@ async def test_start_run_adapter_flattens_profile_and_forwards(lab, monkeypatch)
         (58.0, 15),
         (72.0, 30),
         (72.0, 120),
+        # Post-run hold stage emitted by to_stages_and_cycles (see #12).
+        (4.0, 86_400),
     ]
     assert captured["cycles"] == [(4, 2, 5)]  # (extend_idx, denat_idx, repeat_count)
     assert captured["lid_temp"] == 110.0  # from profile.lid_temperature
