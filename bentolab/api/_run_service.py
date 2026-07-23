@@ -24,7 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..runs import RunLifecycle, RunManager, is_active, is_terminal
+from ..runs import RunLifecycle, RunManager, RunState, is_active, is_terminal
 from ._validation import validate_profile
 
 if TYPE_CHECKING:
@@ -302,11 +302,11 @@ class RunService:
             try:
                 hw = await self._ble.get_run_status()
                 self._run_manager.record_temperature(
-                    run_id, hw.get("block_temperature"), hw.get("lid_temperature")
+                    run_id, hw.block_temperature, hw.lid_temperature
                 )
                 progress = ProgressInfo(
-                    progress=int(hw.get("progress", 0)),
-                    elapsed_seconds=float(hw.get("elapsed_seconds", 0.0)),
+                    progress=hw.progress,
+                    elapsed_seconds=hw.elapsed_seconds,
                 )
             except Exception:
                 logger.debug("Could not poll hardware for run %s", run_id)

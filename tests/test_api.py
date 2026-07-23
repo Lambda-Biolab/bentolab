@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from bentolab.api.app import create_app
 from bentolab.models import PCRProfile
 from bentolab.protocol import StatusBroadcast
+from bentolab.runs import RunLifecycle, RunState
 
 # ---------------------------------------------------------------------------
 # Stub BLE client for testing
@@ -80,9 +81,15 @@ class StubBleClient:
             raise RuntimeError("Simulated BLE abort failure")
         self._run_status["running"] = False
 
-    async def get_run_status(self) -> dict[str, Any]:
+    async def get_run_status(self) -> RunState:
         self.get_run_status_called = True
-        return dict(self._run_status)
+        return RunState(
+            state=RunLifecycle.RUNNING if self._run_status["running"] else RunLifecycle.IDLE,
+            progress=int(self._run_status["progress"]),
+            block_temperature=self._run_status["block_temperature"],
+            lid_temperature=self._run_status["lid_temperature"],
+            elapsed_seconds=float(self._run_status["elapsed_seconds"]),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from bentolab import __version__
 from bentolab.models import PCRProfile
 from bentolab.protocol import StatusBroadcast
-from bentolab.runs import RunManager
+from bentolab.runs import RunManager, RunState
 
 from ._run_service import (
     ApprovalRequiredError,
@@ -92,14 +92,12 @@ class BleClientProtocol(Protocol):
         """Abort the currently running PCR program on the device."""
         ...
 
-    async def get_run_status(self) -> dict[str, Any]:
+    async def get_run_status(self) -> RunState:
         """Poll the current run status from the device.
 
-        Returns a dict with at least:
-            running (bool)
-            progress (int)
-            block_temperature (float)
-            lid_temperature (float)
+        Returns a :class:`~bentolab.runs.RunState` with the lifecycle
+        state, progress (0-100), block + lid temperatures, and elapsed
+        seconds.
         """
         ...
 

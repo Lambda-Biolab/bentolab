@@ -420,24 +420,24 @@ class BentoLabBLE:
                 return r["data"]
         raise BentoLabCommandError("No run status response")
 
-    async def get_run_status(self) -> dict[str, Any]:
-        """Return a snapshot of the current run suitable for the API.
+    async def get_run_status(self) -> RunState:
+        """Return a typed snapshot of the current run for the API.
 
         Combines :meth:`poll_run_status` (progress + running flag) with
-        :meth:`get_status` (block + lid temperatures) into the dict
-        shape the HTTP API service expects. ``elapsed_seconds`` is
+        :meth:`get_status` (block + lid temperatures) into a
+        :class:`~bentolab.runs.RunState`. ``elapsed_seconds`` is
         reported as 0.0 since the device doesn't surface an elapsed-time
         field; the API layer tracks that on its own.
         """
         rs = await self.poll_run_status()
         sb = await self.get_status()
-        return {
-            "running": bool(rs.running),
-            "progress": int(rs.progress),
-            "block_temperature": float(sb.block_temperature),
-            "lid_temperature": float(sb.lid_temperature),
-            "elapsed_seconds": 0.0,
-        }
+        return RunState(
+            state=RunLifecycle.RUNNING if rs.running else RunLifecycle.IDLE,
+            progress=int(rs.progress),
+            block_temperature=float(sb.block_temperature),
+            lid_temperature=float(sb.lid_temperature),
+            elapsed_seconds=0.0,
+        )
 
     async def abort_run(self) -> None:
         """Abort the current run. Adapter alias for :meth:`stop_run`."""
