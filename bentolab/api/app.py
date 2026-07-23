@@ -114,6 +114,33 @@ class BleClientProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 
+def _http_error_body(
+    code: str,
+    human_message: str,
+    operator_hint: str,
+    *,
+    status_code: int,
+    retryable: bool,
+    details: dict[str, Any] | None = None,
+) -> HTTPException:
+    """Build the canonical ErrorResponse-shaped HTTPException.
+
+    All endpoints emit errors with the same envelope (code, severity,
+    human_message, operator_hint, retryable, details). This helper
+    keeps the envelope shape in one place so a future schema change
+    doesn't require touching every handler.
+    """
+    body: dict[str, Any] = {
+        "code": code,
+        "severity": "error",
+        "human_message": human_message,
+        "operator_hint": operator_hint,
+        "retryable": retryable,
+        "details": details if details is not None else {},
+    }
+    return HTTPException(status_code=status_code, detail=body)
+
+
 def _device_from_discovery(item: tuple[Any, Any]) -> DeviceInfo:
     """Normalize a BLE discovery result to a DeviceInfo."""
     dev, _adv = item
@@ -326,40 +353,30 @@ async def _start_run(body: RunRequest, request: Request) -> RunAcceptedResponse:
             approval_id=body.approval_id,
         )
     except PreflightFailedError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=400,
-            detail={
-                "code": "preflight_failed",
-                "severity": "error",
-                "human_message": "Preflight checks failed",
-                "operator_hint": "; ".join(exc.errors),
-                "retryable": True,
-                "details": {"errors": exc.errors},
-            },
+            retryable=True,
+            code="preflight_failed",
+            human_message="Preflight checks failed",
+            operator_hint="; ".join(exc.errors),
+            details={"errors": exc.errors},
         ) from exc
     except ApprovalRequiredError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=400,
-            detail={
-                "code": "approval_required",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Supply a gateway approval_id in the request body",
-                "retryable": True,
-                "details": {},
-            },
+            retryable=True,
+            code="approval_required",
+            human_message=str(exc),
+            operator_hint="Supply a gateway approval_id in the request body",
         ) from exc
     except RunStartFailedError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=500,
-            detail={
-                "code": "run_start_failed",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check BLE connection and device state, then retry",
-                "retryable": True,
-                "details": {"run_id": exc.run_id},
-            },
+            retryable=True,
+            code="run_start_failed",
+            human_message=str(exc),
+            operator_hint="Check BLE connection and device state, then retry",
+            details={"run_id": exc.run_id},
         ) from exc
 
     return RunAcceptedResponse(
@@ -376,16 +393,13 @@ async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDet
     try:
         detail = await service.get_run_status(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
 
     progress = (
@@ -419,28 +433,22 @@ async def _abort_run(run_id: str, request: Request) -> RunAbortResponse:
     try:
         aborted = await service.abort_run(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
     except CannotAbortError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=409,
-            detail={
-                "code": "cannot_abort",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Only active runs can be aborted",
-                "retryable": False,
-                "details": {"run_id": run_id, "state": exc.state},
-            },
+            retryable=False,
+            code="cannot_abort",
+            human_message=str(exc),
+            operator_hint="Only active runs can be aborted",
+            details={"run_id": run_id, "state": exc.state},
         ) from exc
 
     return RunAbortResponse(
@@ -456,16 +464,13 @@ async def _get_results(run_id: str, request: Request) -> RunResultResponse:
     try:
         results = service.get_results(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
 
     return RunResultResponse(
