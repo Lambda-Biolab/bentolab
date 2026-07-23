@@ -69,7 +69,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "C90", "S", "RUF"]
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-"tools/*" = ["C901", "S"]
+"tools/*" = ["S"]   # tools are debug scripts; S rules (bandit) are advisory
 "tests/*" = ["S101", "S"]   # assert is pytest idiom; tests don't ship
 
 [tool.complexipy]
