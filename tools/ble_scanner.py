@@ -197,211 +197,251 @@ async def enumerate_gatt(
 
         console.print("[green]Connected successfully.[/green]\n")
 
-        # Build the service tree for display
         tree = Tree(
             f"[bold cyan]{device.name or 'Unknown'}[/bold cyan] ({device.address})",
             guide_style="blue",
         )
 
         notifiable_chars: list[BleakGATTCharacteristic] = []
-
         for service in client.services:
-            svc_name = lookup_uuid(service.uuid)
-            svc_label = (
-                f"[bold yellow]{svc_name}[/bold yellow]"
-                if svc_name != "Custom"
-                else "[bold magenta]Custom[/bold magenta]"
-            )
-            svc_node = tree.add(f"{svc_label}  [dim]{service.uuid}[/dim]")
-
-            svc_data: dict = {
-                "uuid": service.uuid,
-                "name": svc_name,
-                "characteristics": [],
-            }
-
-            for char in service.characteristics:
-                props = _props_list(char)
-                char_name = lookup_uuid(char.uuid)
-                props_str = ", ".join(props)
-
-                char_data: dict = {
-                    "uuid": char.uuid,
-                    "name": char_name,
-                    "properties": props,
-                    "handle": char.handle,
-                    "value_hex": None,
-                    "value_text": None,
-                    "read_error": None,
-                }
-
-                # Try to read if readable
-                if "read" in props:
-                    try:
-                        raw = await asyncio.wait_for(client.read_gatt_char(char), timeout=5.0)
-                        char_data["value_hex"] = _hex(raw)
-                        decoded = _try_decode(raw)
-                        if decoded:
-                            char_data["value_text"] = decoded
-                    except TimeoutError:
-                        char_data["read_error"] = "timeout"
-                    except BleakError as exc:
-                        char_data["read_error"] = str(exc)
-                    except Exception as exc:
-                        char_data["read_error"] = f"unexpected: {exc}"
-
-                # Track notifiable characteristics
-                if "notify" in props or "indicate" in props:
-                    notifiable_chars.append(char)
-
-                # Build display
-                val_display = ""
-                if char_data["value_text"]:
-                    val_display = f'  = [green]"{char_data["value_text"]}"[/green]'
-                elif char_data["value_hex"]:
-                    val_display = f"  = [dim]{char_data['value_hex']}[/dim]"
-                elif char_data["read_error"]:
-                    val_display = f"  [red]({char_data['read_error']})[/red]"
-
-                char_style = "white" if char_name != "Custom" else "magenta"
-                svc_node.add(
-                    f"[{char_style}]{char_name}[/{char_style}]  "
-                    f"[dim]{char.uuid}[/dim]\n"
-                    f"        [{char_style}]Properties:[/{char_style}] {props_str}"
-                    f"{val_display}"
-                )
-
-                # Enumerate descriptors
-                for desc in char.descriptors:
-                    desc_name = lookup_uuid(desc.uuid)
-                    try:
-                        desc_val = await asyncio.wait_for(
-                            client.read_gatt_descriptor(desc.handle), timeout=5.0
-                        )
-                        char_data.setdefault("descriptors", []).append(
-                            {
-                                "uuid": desc.uuid,
-                                "name": desc_name,
-                                "value_hex": _hex(desc_val),
-                            }
-                        )
-                    except Exception:
-                        char_data.setdefault("descriptors", []).append(
-                            {
-                                "uuid": desc.uuid,
-                                "name": desc_name,
-                                "value_hex": None,
-                            }
-                        )
-
-                svc_data["characteristics"].append(char_data)
-
-            result["services"].append(svc_data)
+            await _process_service(client, service, tree, notifiable_chars, result)
 
         console.print(tree)
         console.print()
 
-        # --- Notification monitoring ---
         if notifiable_chars and notify_time > 0:
-            console.print(
-                Panel(
-                    f"Subscribing to {len(notifiable_chars)} notifiable characteristic(s)\n"
-                    f"Listening for [cyan]{notify_time}s[/cyan]... (Ctrl+C to stop early)",
-                    title="Notification Monitor",
-                    border_style="yellow",
-                )
-            )
-
-            notifications: list[dict] = []
-            stop_event = asyncio.Event()
-
-            # Handle Ctrl+C gracefully
-            loop = asyncio.get_running_loop()
-            original_handler = signal.getsignal(signal.SIGINT)
-
-            def _sigint_handler(_sig: int, _frame: object) -> None:
-                console.print("\n[yellow]Stopping notification monitor...[/yellow]")
-                loop.call_soon_threadsafe(stop_event.set)
-
-            signal.signal(signal.SIGINT, _sigint_handler)
-
-            def _make_callback(
-                char_uuid: str,
-            ) -> callable:
-                def _notification_handler(
-                    _sender: BleakGATTCharacteristic,
-                    data: bytearray,
-                ) -> None:
-                    ts = datetime.now(tz=UTC).isoformat()
-                    raw_bytes = bytes(data)
-                    entry = {
-                        "timestamp": ts,
-                        "uuid": char_uuid,
-                        "name": lookup_uuid(char_uuid),
-                        "hex": _hex(raw_bytes),
-                        "decoded": _try_decode(raw_bytes),
-                        "length": len(raw_bytes),
-                    }
-                    notifications.append(entry)
-
-                    decoded_str = f' "{entry["decoded"]}"' if entry["decoded"] else ""
-                    console.print(
-                        f"  [dim]{ts}[/dim]  "
-                        f"[cyan]{char_uuid}[/cyan]  "
-                        f"[green]{entry['hex']}[/green]"
-                        f"{decoded_str}"
-                    )
-
-                return _notification_handler
-
-            # Subscribe to all notifiable characteristics
-            for char in notifiable_chars:
-                try:
-                    await client.start_notify(char, _make_callback(char.uuid))
-                    console.print(
-                        f"  Subscribed: [cyan]{char.uuid}[/cyan] ({lookup_uuid(char.uuid)})"
-                    )
-                except BleakError as exc:
-                    console.print(f"  [red]Failed to subscribe {char.uuid}: {exc}[/red]")
-
-            console.print()
-
-            # Wait for notify_time or Ctrl+C
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(stop_event.wait(), timeout=notify_time)
-
-            # Restore signal handler
-            signal.signal(signal.SIGINT, original_handler)
-
-            # Unsubscribe
-            for char in notifiable_chars:
-                with contextlib.suppress(BleakError):
-                    await client.stop_notify(char)
-
-            result["notifications"] = notifications
-
-            if notifications:
-                notify_table = Table(
-                    title=f"Notifications Received ({len(notifications)})",
-                    show_lines=True,
-                    border_style="yellow",
-                )
-                notify_table.add_column("Timestamp", style="dim", min_width=26)
-                notify_table.add_column("UUID", style="cyan", min_width=36)
-                notify_table.add_column("Hex", style="green")
-                notify_table.add_column("Decoded", style="white")
-
-                for n in notifications:
-                    notify_table.add_row(n["timestamp"], n["uuid"], n["hex"], n["decoded"] or "")
-
-                console.print(notify_table)
-            else:
-                console.print("[yellow]No notifications received.[/yellow]")
-
+            await _monitor_notifications(client, notifiable_chars, notify_time, result)
         elif not notifiable_chars:
             console.print("[dim]No notifiable characteristics found.[/dim]")
 
     return result
+
+
+def _format_value_display(char_data: dict) -> str:
+    """Format a characteristic's current value or read error for the tree view."""
+    if char_data["value_text"]:
+        return f'  = [green]"{char_data["value_text"]}"[/green]'
+    if char_data["value_hex"]:
+        return f"  = [dim]{char_data['value_hex']}[/dim]"
+    if char_data["read_error"]:
+        return f"  [red]({char_data['read_error']})[/red]"
+    return ""
+
+
+async def _read_char_value(client, char) -> tuple[str | None, str | None, str | None]:
+    """Try to read a characteristic's value. Returns (hex, text, error_str)."""
+    try:
+        raw = await asyncio.wait_for(client.read_gatt_char(char), timeout=5.0)
+    except TimeoutError:
+        return None, None, "timeout"
+    except BleakError as exc:
+        return None, None, str(exc)
+    except Exception as exc:
+        return None, None, f"unexpected: {exc}"
+    return _hex(raw), _try_decode(raw) or None, None
+
+
+async def _read_descriptors(client, char) -> list[dict]:
+    """Read every descriptor of a characteristic. Per-descriptor failures yield null."""
+    out: list[dict] = []
+    for desc in char.descriptors:
+        try:
+            desc_val = await asyncio.wait_for(client.read_gatt_descriptor(desc.handle), timeout=5.0)
+            out.append(
+                {
+                    "uuid": desc.uuid,
+                    "name": lookup_uuid(desc.uuid),
+                    "value_hex": _hex(desc_val),
+                }
+            )
+        except Exception:
+            out.append(
+                {
+                    "uuid": desc.uuid,
+                    "name": lookup_uuid(desc.uuid),
+                    "value_hex": None,
+                }
+            )
+    return out
+
+
+async def _enumerate_characteristic(client, char, svc_node) -> dict:
+    """Build the per-characteristic data dict and add it to the service tree."""
+    props = _props_list(char)
+    char_name = lookup_uuid(char.uuid)
+    props_str = ", ".join(props)
+
+    char_data: dict = {
+        "uuid": char.uuid,
+        "name": char_name,
+        "properties": props,
+        "handle": char.handle,
+        "value_hex": None,
+        "value_text": None,
+        "read_error": None,
+    }
+
+    if "read" in props:
+        value_hex, value_text, read_error = await _read_char_value(client, char)
+        char_data["value_hex"] = value_hex
+        char_data["value_text"] = value_text
+        char_data["read_error"] = read_error
+
+    val_display = _format_value_display(char_data)
+    char_style = "white" if char_name != "Custom" else "magenta"
+    svc_node.add(
+        f"[{char_style}]{char_name}[/{char_style}]  "
+        f"[dim]{char.uuid}[/dim]\n"
+        f"        [{char_style}]Properties:[/{char_style}] {props_str}"
+        f"{val_display}"
+    )
+
+    char_data["descriptors"] = await _read_descriptors(client, char)
+    return char_data
+
+
+async def _process_service(
+    client,
+    service,
+    tree,
+    notifiable_chars: list[BleakGATTCharacteristic],
+    result: dict,
+) -> None:
+    """Enumerate one GATT service: append to tree, populate ``result['services']``."""
+    svc_name = lookup_uuid(service.uuid)
+    svc_label = (
+        f"[bold yellow]{svc_name}[/bold yellow]"
+        if svc_name != "Custom"
+        else "[bold magenta]Custom[/bold magenta]"
+    )
+    svc_node = tree.add(f"{svc_label}  [dim]{service.uuid}[/dim]")
+
+    svc_data: dict = {
+        "uuid": service.uuid,
+        "name": svc_name,
+        "characteristics": [],
+    }
+
+    for char in service.characteristics:
+        char_data = await _enumerate_characteristic(client, char, svc_node)
+        svc_data["characteristics"].append(char_data)
+        if "notify" in char_data["properties"] or "indicate" in char_data["properties"]:
+            notifiable_chars.append(char)
+
+    result["services"].append(svc_data)
+
+
+def _make_enumeration_callback(char_uuid: str, notifications: list[dict]) -> callable:
+    """Build a notification callback that appends to ``notifications`` and prints."""
+
+    def _notification_handler(_sender: BleakGATTCharacteristic, data: bytearray) -> None:
+        ts = datetime.now(tz=UTC).isoformat()
+        raw_bytes = bytes(data)
+        entry = {
+            "timestamp": ts,
+            "uuid": char_uuid,
+            "name": lookup_uuid(char_uuid),
+            "hex": _hex(raw_bytes),
+            "decoded": _try_decode(raw_bytes),
+            "length": len(raw_bytes),
+        }
+        notifications.append(entry)
+
+        decoded_str = f' "{entry["decoded"]}"' if entry["decoded"] else ""
+        console.print(
+            f"  [dim]{ts}[/dim]  "
+            f"[cyan]{char_uuid}[/cyan]  "
+            f"[green]{entry['hex']}[/green]"
+            f"{decoded_str}"
+        )
+
+    return _notification_handler
+
+
+def _install_sigint_stop_handler() -> tuple[callable, asyncio.Event]:
+    """Install a SIGINT handler that sets a stop event; return (orig_handler, event)."""
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    original_handler = signal.getsignal(signal.SIGINT)
+
+    def _sigint_handler(_sig: int, _frame: object) -> None:
+        console.print("\n[yellow]Stopping notification monitor...[/yellow]")
+        loop.call_soon_threadsafe(stop_event.set)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+    return original_handler, stop_event
+
+
+async def _subscribe_to_notifiable_chars(
+    client, notifiable_chars: list[BleakGATTCharacteristic], notifications: list[dict]
+) -> None:
+    """Subscribe to every notifiable char; per-char failures print but don't abort."""
+    for char in notifiable_chars:
+        try:
+            await client.start_notify(char, _make_enumeration_callback(char.uuid, notifications))
+            console.print(f"  Subscribed: [cyan]{char.uuid}[/cyan] ({lookup_uuid(char.uuid)})")
+        except BleakError as exc:
+            console.print(f"  [red]Failed to subscribe {char.uuid}: {exc}[/red]")
+
+
+async def _unsubscribe_notifiable_chars(
+    client, notifiable_chars: list[BleakGATTCharacteristic]
+) -> None:
+    """Stop notifications on every previously-subscribed characteristic (best-effort)."""
+    for char in notifiable_chars:
+        with contextlib.suppress(BleakError):
+            await client.stop_notify(char)
+
+
+def _print_notification_summary(notifications: list[dict]) -> None:
+    """Print the final notifications table, or a 'no notifications' line."""
+    if not notifications:
+        console.print("[yellow]No notifications received.[/yellow]")
+        return
+    notify_table = Table(
+        title=f"Notifications Received ({len(notifications)})",
+        show_lines=True,
+        border_style="yellow",
+    )
+    notify_table.add_column("Timestamp", style="dim", min_width=26)
+    notify_table.add_column("UUID", style="cyan", min_width=36)
+    notify_table.add_column("Hex", style="green")
+    notify_table.add_column("Decoded", style="white")
+    for n in notifications:
+        notify_table.add_row(n["timestamp"], n["uuid"], n["hex"], n["decoded"] or "")
+    console.print(notify_table)
+
+
+async def _monitor_notifications(
+    client,
+    notifiable_chars: list[BleakGATTCharacteristic],
+    notify_time: float,
+    result: dict,
+) -> None:
+    """Subscribe, listen, and unsubscribe; populate result['notifications']."""
+    console.print(
+        Panel(
+            f"Subscribing to {len(notifiable_chars)} notifiable characteristic(s)\n"
+            f"Listening for [cyan]{notify_time}s[/cyan]... (Ctrl+C to stop early)",
+            title="Notification Monitor",
+            border_style="yellow",
+        )
+    )
+
+    notifications: list[dict] = []
+    original_handler, stop_event = _install_sigint_stop_handler()
+
+    await _subscribe_to_notifiable_chars(client, notifiable_chars, notifications)
+    console.print()
+
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(stop_event.wait(), timeout=notify_time)
+
+    signal.signal(signal.SIGINT, original_handler)
+    await _unsubscribe_notifiable_chars(client, notifiable_chars)
+
+    result["notifications"] = notifications
+    _print_notification_summary(notifications)
 
 
 # ---------------------------------------------------------------------------
@@ -428,98 +468,147 @@ def save_markdown(data: dict, output_dir: Path, timestamp: str) -> Path:
     notifications = data.get("notifications", [])
 
     lines: list[str] = []
-    lines.append(f"# BLE GATT Profile — {device.get('name', 'Unknown')}")
-    lines.append("")
-    lines.append(f"**Scanned:** {timestamp}")
-    lines.append(f"**Device:** {device.get('name', 'Unknown')} ({device.get('address', 'N/A')})")
-    lines.append("")
-
-    # Discovered services
-    lines.append("## Discovered Services")
-    lines.append("")
-    for svc in services:
-        svc_label = svc["name"] if svc["name"] != "Custom" else "Custom / Vendor"
-        lines.append(f"- **{svc_label}** `{svc['uuid']}`")
-    lines.append("")
-
-    # Characteristics table
-    lines.append("## Characteristics Table")
-    lines.append("")
-    lines.append("| Service UUID | Char UUID | Properties | Description | Sample Value |")
-    lines.append("|-------------|-----------|------------|-------------|--------------|")
-    for svc in services:
-        for char in svc["characteristics"]:
-            props = ", ".join(char["properties"])
-            desc = char["name"]
-            value = ""
-            if char.get("value_text"):
-                value = char["value_text"]
-            elif char.get("value_hex"):
-                value = f"`{char['value_hex']}`"
-            elif char.get("read_error"):
-                value = f"_error: {char['read_error']}_"
-
-            lines.append(f"| `{svc['uuid']}` | `{char['uuid']}` | {props} | {desc} | {value} |")
-    lines.append("")
-
-    # Notification channels
-    notifiable = []
-    for svc in services:
-        for char in svc["characteristics"]:
-            if "notify" in char["properties"] or "indicate" in char["properties"]:
-                notifiable.append(char)
-
-    lines.append("## Notification Channels")
-    lines.append("")
-    if notifiable:
-        lines.append("| Char UUID | Data Format | Update Rate | Description |")
-        lines.append("|-----------|-------------|-------------|-------------|")
-        for char in notifiable:
-            # Infer data format from any captured notifications
-            fmt = "unknown"
-            rate = "unknown"
-            for n in notifications:
-                if n["uuid"] == char["uuid"]:
-                    fmt = f"{n['length']} bytes"
-                    break
-            lines.append(f"| `{char['uuid']}` | {fmt} | {rate} | {char['name']} |")
-    else:
-        lines.append("_No notifiable characteristics found._")
-    lines.append("")
-
-    # Unknown characteristics
-    lines.append("## Unknown Characteristics")
-    lines.append("")
-    custom_chars = [
-        char for svc in services for char in svc["characteristics"] if char["name"] == "Custom"
-    ]
-    if custom_chars:
-        lines.append("_Characteristics with no identified purpose yet._")
-        lines.append("")
-        for char in custom_chars:
-            val_str = ""
-            if char.get("value_hex"):
-                val_str = f" = `{char['value_hex']}`"
-            lines.append(f"- `{char['uuid']}` [{', '.join(char['properties'])}]{val_str}")
-    else:
-        lines.append("_All characteristics identified._")
-    lines.append("")
-
-    # Raw notification log
-    if notifications:
-        lines.append("## Notification Log")
-        lines.append("")
-        lines.append("| Timestamp | UUID | Hex | Decoded |")
-        lines.append("|-----------|------|-----|---------|")
-        for n in notifications:
-            lines.append(
-                f"| {n['timestamp']} | `{n['uuid']}` | `{n['hex']}` | {n['decoded'] or ''} |"
-            )
-        lines.append("")
+    lines.extend(_markdown_header(device, timestamp))
+    lines.extend(_markdown_services_section(services))
+    lines.extend(_markdown_characteristics_table(services))
+    lines.extend(_markdown_notification_channels(services, notifications))
+    lines.extend(_markdown_unknown_characteristics(services))
+    lines.extend(_markdown_notification_log(notifications))
 
     path.write_text("\n".join(lines), encoding="utf-8")
     console.print(f"[green]Markdown saved:[/green] {path}")
     return path
+
+
+def _markdown_header(device: dict, timestamp: str) -> list[str]:
+    """Title block: H1 + scanned + device lines."""
+    name = device.get("name", "Unknown")
+    return [
+        f"# BLE GATT Profile — {name}",
+        "",
+        f"**Scanned:** {timestamp}",
+        f"**Device:** {name} ({device.get('address', 'N/A')})",
+        "",
+    ]
+
+
+def _markdown_services_section(services: list[dict]) -> list[str]:
+    """H2 'Discovered Services' followed by a bulleted UUID list."""
+    out = ["## Discovered Services", ""]
+    for svc in services:
+        label = svc["name"] if svc["name"] != "Custom" else "Custom / Vendor"
+        out.append(f"- **{label}** `{svc['uuid']}`")
+    out.append("")
+    return out
+
+
+def _markdown_characteristics_table(services: list[dict]) -> list[str]:
+    """H2 'Characteristics Table' followed by a markdown table."""
+    out = [
+        "## Characteristics Table",
+        "",
+        "| Service UUID | Char UUID | Properties | Description | Sample Value |",
+        "|-------------|-----------|------------|-------------|--------------|",
+    ]
+    for svc in services:
+        for char in svc["characteristics"]:
+            props = ", ".join(char["properties"])
+            value = _format_sample_value(char)
+            out.append(
+                f"| `{svc['uuid']}` | `{char['uuid']}` | {props} | {char['name']} | {value} |"
+            )
+    out.append("")
+    return out
+
+
+def _format_sample_value(char: dict) -> str:
+    """Pick the best string for the 'Sample Value' column of the characteristics table."""
+    if char.get("value_text"):
+        return char["value_text"]
+    if char.get("value_hex"):
+        return f"`{char['value_hex']}`"
+    if char.get("read_error"):
+        return f"_error: {char['read_error']}_"
+    return ""
+
+
+def _collect_notifiable_chars(services: list[dict]) -> list[dict]:
+    """Flatten all characteristics that support notify or indicate."""
+    out: list[dict] = []
+    for svc in services:
+        for char in svc["characteristics"]:
+            if "notify" in char["properties"] or "indicate" in char["properties"]:
+                out.append(char)
+    return out
+
+
+def _infer_data_format(char: dict, notifications: list[dict]) -> str:
+    """Infer a char's data format from any captured notifications."""
+    for n in notifications:
+        if n["uuid"] == char["uuid"]:
+            return f"{n['length']} bytes"
+    return "unknown"
+
+
+def _markdown_notification_channels(services: list[dict], notifications: list[dict]) -> list[str]:
+    """H2 'Notification Channels' followed by a table (or 'none' fallback)."""
+    notifiable = _collect_notifiable_chars(services)
+    out = ["## Notification Channels", ""]
+    if not notifiable:
+        out.append("_No notifiable characteristics found._")
+        out.append("")
+        return out
+    out.extend(
+        [
+            "| Char UUID | Data Format | Update Rate | Description |",
+            "|-----------|-------------|-------------|-------------|",
+        ]
+    )
+    for char in notifiable:
+        fmt = _infer_data_format(char, notifications)
+        out.append(f"| `{char['uuid']}` | {fmt} | unknown | {char['name']} |")
+    out.append("")
+    return out
+
+
+def _collect_custom_chars(services: list[dict]) -> list[dict]:
+    """Flatten all characteristics whose lookup name is 'Custom'."""
+    return [char for svc in services for char in svc["characteristics"] if char["name"] == "Custom"]
+
+
+def _markdown_unknown_characteristics(services: list[dict]) -> list[str]:
+    """H2 'Unknown Characteristics' listing Custom-name chars (or 'all known')."""
+    custom_chars = _collect_custom_chars(services)
+    out = ["## Unknown Characteristics", ""]
+    if not custom_chars:
+        out.append("_All characteristics identified._")
+        out.append("")
+        return out
+    out.append("_Characteristics with no identified purpose yet._")
+    out.append("")
+    for char in custom_chars:
+        val_str = ""
+        if char.get("value_hex"):
+            val_str = f" = `{char['value_hex']}`"
+        out.append(f"- `{char['uuid']}` [{', '.join(char['properties'])}]{val_str}")
+    out.append("")
+    return out
+
+
+def _markdown_notification_log(notifications: list[dict]) -> list[str]:
+    """H2 'Notification Log' table; empty if no notifications."""
+    if not notifications:
+        return []
+    out = [
+        "## Notification Log",
+        "",
+        "| Timestamp | UUID | Hex | Decoded |",
+        "|-----------|------|-----|---------|",
+    ]
+    for n in notifications:
+        out.append(f"| {n['timestamp']} | `{n['uuid']}` | `{n['hex']}` | {n['decoded'] or ''} |")
+    out.append("")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +716,29 @@ async def async_main(args: argparse.Namespace) -> None:
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     output_dir = args.output_dir.resolve()
 
-    # ---- Scan phase ----
+    scan_data, discovered, matches = await _do_scan_phase(args, output_dir, timestamp)
+    if not args.connect or scan_data is None:
+        return
+
+    target_device = _select_target_device(matches, discovered, args)
+    if target_device is None:
+        return
+
+    await _do_connect_phase(target_device, scan_data, args, output_dir, timestamp)
+
+
+async def _do_scan_phase(
+    args: argparse.Namespace, output_dir: Path, timestamp: str
+) -> tuple[dict | None, list, list[tuple]]:
+    """Run the scan phase: discover, display, optionally save scan-only output.
+
+    Returns (scan_data, discovered, matches). ``scan_data`` is None when
+    the scan was cancelled (BLE error or no --connect) — caller exits.
+    ``discovered`` is the full BLEDevice list; ``matches`` is the
+    post-filter list of (BLEDevice, AdvertisementData) whose name
+    matches ``--device-name``; used by the connect phase to pick a
+    target.
+    """
     try:
         discovered = await scan_devices(args.scan_time, args.device_name)
     except BleakError as exc:
@@ -636,9 +747,18 @@ async def async_main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     matches = display_scan_results(discovered, args.device_name)
+    scan_data = _build_scan_data(discovered, args, timestamp)
 
-    # Build scan-only JSON data
-    scan_data: dict = {
+    if not args.connect:
+        _save_scan_only_output(scan_data, args, output_dir, timestamp)
+        return None, discovered, []
+
+    return scan_data, discovered, matches
+
+
+def _build_scan_data(discovered, args, timestamp: str) -> dict:
+    """Build the scan-only JSON dict from the discovery result."""
+    return {
         "timestamp": timestamp,
         "scan_time": args.scan_time,
         "name_filter": args.device_name,
@@ -656,63 +776,64 @@ async def async_main(args: argparse.Namespace) -> None:
         ],
     }
 
-    if not args.connect:
-        # Save scan results only
-        if args.format in ("json", "both"):
-            save_json(scan_data, output_dir, timestamp)
-        if args.format in ("md", "both"):
-            console.print("[dim]Markdown output requires --connect for GATT data.[/dim]")
-        return
 
-    # ---- Connect phase ----
-    target_device: BLEDevice | None = None
+def _save_scan_only_output(scan_data: dict, args, output_dir: Path, timestamp: str) -> None:
+    """Save scan-only JSON; explain why markdown isn't generated without --connect."""
+    if args.format in ("json", "both"):
+        save_json(scan_data, output_dir, timestamp)
+    if args.format in ("md", "both"):
+        console.print("[dim]Markdown output requires --connect for GATT data.[/dim]")
 
+
+def _select_target_device(matches: list[tuple], discovered: list, args) -> BLEDevice | str | None:
+    """Pick which device to connect to. Returns None when no candidate is found."""
     if args.device_address:
-        # Find by address in discovered devices, or create a reference
-        addr_upper = args.device_address.upper()
-        for dev, _adv in discovered:
-            if dev.address.upper() == addr_upper:
-                target_device = dev
-                break
-
-        if target_device is None:
-            # Device might not have been in scan results; try direct connect
-            console.print(
-                f"[yellow]Address {args.device_address} not found in scan. "
-                f"Attempting direct connection...[/yellow]"
-            )
-            # Create a minimal BLEDevice-like target; BleakClient accepts address strings
-            target_device = args.device_address  # type: ignore[assignment]
-    elif matches:
-        if len(matches) == 1:
-            target_device = matches[0][0]
-        else:
-            # Multiple matches: pick the strongest signal
-            target_device = matches[0][0]  # already sorted by RSSI
-            console.print(
-                f"[yellow]Multiple matches found. Connecting to strongest: "
-                f"{target_device.name} ({target_device.address})[/yellow]"
-            )
-    else:
+        return _select_by_address(args.device_address, discovered)
+    if not matches:
         console.print(
             "[red]No matching devices found. Cannot connect.[/red]\n"
             "[dim]Try broadening --device-name or specifying --device-address[/dim]"
         )
-        return
+        return None
+    if len(matches) == 1:
+        return matches[0][0]
+    strongest = matches[0][0]
+    console.print(
+        f"[yellow]Multiple matches found. Connecting to strongest: "
+        f"{strongest.name} ({strongest.address})[/yellow]"
+    )
+    return strongest
 
+
+def _select_by_address(address: str, discovered: list) -> str:
+    """Return the BLEDevice from ``discovered`` matching ``address``, or the
+    raw address string for BleakClient to handle as a direct connection."""
+    addr_upper = address.upper()
+    for dev, _adv in discovered:
+        if dev.address.upper() == addr_upper:
+            return dev
+    console.print(
+        f"[yellow]Address {address} not in scan. Attempting direct connection...[/yellow]"
+    )
+    return address
+
+
+async def _do_connect_phase(
+    target_device,
+    scan_data: dict,
+    args,
+    output_dir: Path,
+    timestamp: str,
+) -> None:
+    """Connect, enumerate GATT, merge scan data, and save outputs."""
     try:
-        gatt_data = await enumerate_gatt(
-            target_device,
-            args.notify_time,
-        )
+        gatt_data = await enumerate_gatt(target_device, args.notify_time)
     except BleakError as exc:
         _check_macos_bluetooth_permission(exc)
         console.print(f"[red]Connection failed: {exc}[/red]")
         sys.exit(1)
 
-    # Merge scan data into GATT data for complete output
     gatt_data["scan"] = scan_data
-
     if args.format in ("json", "both"):
         save_json(gatt_data, output_dir, timestamp)
     if args.format in ("md", "both"):
