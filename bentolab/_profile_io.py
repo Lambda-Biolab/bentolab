@@ -16,7 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .models import CycleStep, PCRProfile, ThermalStep
+from .models import (
+    _DEFAULT_FINAL_EXTENSION,
+    _DEFAULT_HOLD_TEMPERATURE,
+    _DEFAULT_INITIAL_DENATURATION,
+    _DEFAULT_LID_TEMPERATURE,
+    CycleStep,
+    PCRProfile,
+    ThermalStep,
+)
 
 __all__ = [
     "profile_from_dict",
@@ -69,7 +77,7 @@ def profile_from_dict(data: dict[str, Any]) -> PCRProfile:
     return PCRProfile(
         name=str(data["name"]),
         initial_denaturation=_step_from_dict(
-            data.get("initial_denaturation"), default=ThermalStep(95.0, 180)
+            data.get("initial_denaturation"), default=_DEFAULT_INITIAL_DENATURATION
         ),
         cycles=[
             CycleStep(
@@ -81,10 +89,10 @@ def profile_from_dict(data: dict[str, Any]) -> PCRProfile:
             for c in data.get("cycles", [])
         ],
         final_extension=_step_from_dict(
-            data.get("final_extension"), default=ThermalStep(72.0, 300)
+            data.get("final_extension"), default=_DEFAULT_FINAL_EXTENSION
         ),
-        hold_temperature=float(data.get("hold_temperature", 4.0)),
-        lid_temperature=float(data.get("lid_temperature", 110.0)),
+        hold_temperature=float(data.get("hold_temperature", _DEFAULT_HOLD_TEMPERATURE)),
+        lid_temperature=float(data.get("lid_temperature", _DEFAULT_LID_TEMPERATURE)),
         notes=str(data.get("notes", "")),
     )
 

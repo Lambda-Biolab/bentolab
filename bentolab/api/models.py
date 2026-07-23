@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from bentolab.runs import RunLifecycle
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -51,6 +53,16 @@ class TemperatureSnapshot(BaseModel):
     current: float | None = Field(default=None, description="Current block temperature")
     lid: float | None = Field(default=None, description="Lid temperature")
     block: float | None = Field(default=None, description="Block temperature (alias)")
+
+    @classmethod
+    def from_readings(cls, block: float | None, lid: float | None) -> TemperatureSnapshot:
+        """Construct from raw block/lid readings.
+
+        ``current`` and ``block`` carry the same value — the API uses
+        both names for backward compatibility with clients written
+        against either convention.
+        """
+        return cls(current=block, lid=lid, block=block)
 
 
 class RunStateInfo(BaseModel):
@@ -162,7 +174,7 @@ class RunAcceptedResponse(BaseModel):
 
     ok: bool
     run_id: str
-    state: str
+    state: RunLifecycle
     started_at: str
 
 
@@ -170,7 +182,7 @@ class RunAbortResponse(BaseModel):
     """Response from POST /runs/{id}/abort."""
 
     ok: bool
-    state: str
+    state: RunLifecycle
     aborted_at: str | None = None
 
 
@@ -185,7 +197,7 @@ class RunStatusDetailResponse(BaseModel):
     """Response from GET /runs/{id}."""
 
     run_id: str
-    state: str
+    state: RunLifecycle
     progress: RunProgressInfo | None = None
     temperature: TemperatureSnapshot | None = None
     errors: list[StatusError] = Field(default_factory=list)
@@ -208,7 +220,7 @@ class RunResultResponse(BaseModel):
     """
 
     run_id: str
-    state: str
+    state: RunLifecycle
     profile: dict[str, Any] | None = None
     temperature_log: list[TemperatureLogEntry] = Field(default_factory=list)
     started_at: str | None = None

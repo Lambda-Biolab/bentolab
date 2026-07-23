@@ -70,6 +70,18 @@ def test_slug_strips_unsafe() -> None:
     assert profile_store.slug_for("S4 6.9kb 60°C 30x") == "S4-6.9kb-60-C-30x"
 
 
+def test_slug_collapses_runs_of_bad_chars() -> None:
+    """Regression: the previous _safe_slug produced 'a---b' for 'a!!!b'.
+
+    Different from profiles.slug_for which collapsed to 'a-b'. After
+    consolidation both call sites use the regex version. Pin the
+    collapsing behavior so future refactors don't regress.
+    """
+    assert profile_store.slug_for("a!!!b") == "a-b"
+    assert profile_store.slug_for("  spaces  ") == "spaces"
+    assert profile_store.slug_for("###weird###") == "weird"
+
+
 def test_slug_rejects_empty() -> None:
     with pytest.raises(ValueError):
         profile_store.slug_for("///")

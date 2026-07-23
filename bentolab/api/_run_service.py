@@ -24,8 +24,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..models import PCRProfile
 from ..runs import RunLifecycle, RunManager, is_active, is_terminal
+from ._validation import validate_profile
 
 if TYPE_CHECKING:
     from .app import BleClientProtocol
@@ -198,10 +198,11 @@ class RunService:
         except Exception:
             errors.append("Failed to query device status")
 
-        # 4. Profile compatible
-        from .app import _validate_profile  # late import avoids cycle
-
-        ok, profile_errors, _warnings = _validate_profile(profile_dict)
+        # 4. Profile compatible — caller is expected to have run
+        #    validate_profile() already. We re-check via the public
+        #    function so /runs/dry-run (which calls preflight without
+        #    a separate validate) still gets the check.
+        ok, profile_errors, _warnings, _parsed = validate_profile(profile_dict)
         if not ok:
             errors.extend(profile_errors)
 
@@ -232,7 +233,14 @@ class RunService:
             ApprovalRequiredError: no approval_id was supplied.
             RunStartFailedError: BLE transport rejected start_run.
         """
-        # --- Preflight ---
+        # Validate profile once — get the parsed PCRProfile for both
+        # preflight's profile check AND the hardware start below.
+        ok, profile_errors, _warnings, profile = validate_profile(profile_dict)
+        if not ok:
+            raise PreflightFailedError(profile_errors)
+        assert profile is not None  # noqa: S101  type-narrowing for pyright: ok=True guarantees a parsed profile
+
+        # --- Preflight (hardware checks) ---
         pf_errors = await self.preflight(profile_dict, device_address)
         if pf_errors:
             raise PreflightFailedError(pf_errors)
@@ -254,7 +262,8 @@ class RunService:
 
         # --- Start on hardware ---
         try:
-            profile = PCRProfile.from_dict(profile_dict)
+            # Reuse the profile parsed above (no second
+            # PCRProfile.from_dict pass on the hot path).
             await self._ble.start_run(profile)
             self._run_manager.transition_to(run_id, RunLifecycle.RUNNING)
         except Exception as exc:
@@ -293,11 +302,11 @@ class RunService:
             try:
                 hw = await self._ble.get_run_status()
                 self._run_manager.record_temperature(
-                    run_id, hw.get("block_temperature"), hw.get("lid_temperature")
+                    run_id, hw.block_temperature, hw.lid_temperature
                 )
                 progress = ProgressInfo(
-                    progress=int(hw.get("progress", 0)),
-                    elapsed_seconds=float(hw.get("elapsed_seconds", 0.0)),
+                    progress=hw.progress,
+                    elapsed_seconds=hw.elapsed_seconds,
                 )
             except Exception:
                 logger.debug("Could not poll hardware for run %s", run_id)

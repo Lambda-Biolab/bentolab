@@ -266,7 +266,7 @@ async def test_abort_run_delegates_to_stop_run(lab, monkeypatch):
 
 
 async def test_get_run_status_combines_poll_and_status(lab, monkeypatch):
-    """get_run_status returns the dict shape the API service expects."""
+    """get_run_status returns a typed RunState combining poll + status."""
     monkeypatch.setattr(
         lab,
         "poll_run_status",
@@ -275,10 +275,11 @@ async def test_get_run_status_combines_poll_and_status(lab, monkeypatch):
     monkeypatch.setattr(lab, "get_status", AsyncMock(return_value=_status(block=55, lid=105)))
 
     hw = await lab.get_run_status()
-    assert hw["running"] is True
-    assert hw["progress"] == 75
-    assert hw["block_temperature"] == 55.0
-    assert hw["lid_temperature"] == 105.0
+    assert hw.running is True
+    assert hw.state == RunLifecycle.RUNNING
+    assert hw.progress == 75
+    assert hw.block_temperature == 55.0
+    assert hw.lid_temperature == 105.0
 
 
 # --- run_pcr termination logic ---

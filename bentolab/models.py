@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -45,9 +46,9 @@ class PCRProfile:
     """A complete PCR thermal cycling profile."""
 
     name: str = "Untitled"
-    initial_denaturation: ThermalStep = field(default_factory=lambda: ThermalStep(95.0, 180))
+    initial_denaturation: ThermalStep = field(default_factory=lambda: _DEFAULT_INITIAL_DENATURATION)
     cycles: list[CycleStep] = field(default_factory=list)
-    final_extension: ThermalStep = field(default_factory=lambda: ThermalStep(72.0, 300))
+    final_extension: ThermalStep = field(default_factory=lambda: _DEFAULT_FINAL_EXTENSION)
     hold_temperature: float = 4.0
     lid_temperature: float = 110.0
     notes: str = ""
@@ -77,6 +78,32 @@ class PCRProfile:
             ],
             final_extension=ThermalStep(*final_extension),
         )
+
+    def iter_steps(self) -> Iterator[tuple[str, ThermalStep]]:
+        """Yield ``(phase_label, ThermalStep)`` pairs in execution order.
+
+        Each cycle's three sub-steps are repeated ``repeat_count``
+        times, so the generator flattens the nested structure into a
+        single sequence matching what the instrument actually
+        performs. Phase labels:
+
+          - ``"initial_denaturation"``
+          - ``f"cycle_{i}_denaturation" | "_annealing" | "_extension"``
+          - ``"final_extension"``
+
+        Used by :meth:`estimated_runtime_seconds` (sums durations)
+        and by ``_dry_run`` in the HTTP API (builds a DryRunStep list).
+        :meth:`to_stages_and_cycles` does NOT use this generator because
+        it produces a different output shape (stage index tuples for
+        the device protocol, not expanded steps).
+        """
+        yield "initial_denaturation", self.initial_denaturation
+        for i, cycle in enumerate(self.cycles):
+            for _ in range(cycle.repeat_count):
+                yield f"cycle_{i}_denaturation", cycle.denaturation
+                yield f"cycle_{i}_annealing", cycle.annealing
+                yield f"cycle_{i}_extension", cycle.extension
+        yield "final_extension", self.final_extension
 
     def to_stages_and_cycles(
         self,
@@ -112,14 +139,7 @@ class PCRProfile:
 
     def estimated_runtime_seconds(self) -> int:
         """Sum of step durations across the program (excludes ramp time)."""
-        total = self.initial_denaturation.duration
-        for cycle in self.cycles:
-            per_cycle = (
-                cycle.denaturation.duration + cycle.annealing.duration + cycle.extension.duration
-            )
-            total += per_cycle * cycle.repeat_count
-        total += self.final_extension.duration
-        return total
+        return sum(step.duration for _label, step in self.iter_steps())
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a YAML/JSON-friendly dict."""
@@ -153,6 +173,15 @@ class PCRProfile:
         from ._profile_io import profile_from_yaml_file
 
         return profile_from_yaml_file(path)
+
+
+# Module-level constants — single source of truth for default thermal
+# parameters. _profile_io.profile_from_dict uses the same constants for
+# its fallback paths.
+_DEFAULT_INITIAL_DENATURATION = ThermalStep(95.0, 180)
+_DEFAULT_FINAL_EXTENSION = ThermalStep(72.0, 300)
+_DEFAULT_HOLD_TEMPERATURE = 4.0
+_DEFAULT_LID_TEMPERATURE = 110.0
 
 
 @dataclass

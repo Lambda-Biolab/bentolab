@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from bentolab import __version__
 from bentolab.models import PCRProfile
 from bentolab.protocol import StatusBroadcast
-from bentolab.runs import RunManager
+from bentolab.runs import RunManager, RunState
 
 from ._run_service import (
     ApprovalRequiredError,
@@ -27,6 +27,7 @@ from ._run_service import (
     RunService,
     RunStartFailedError,
 )
+from ._validation import validate_profile
 from .models import (
     DeviceInfo,
     DevicesResponse,
@@ -91,107 +92,51 @@ class BleClientProtocol(Protocol):
         """Abort the currently running PCR program on the device."""
         ...
 
-    async def get_run_status(self) -> dict[str, Any]:
+    async def get_run_status(self) -> RunState:
         """Poll the current run status from the device.
 
-        Returns a dict with at least:
-            running (bool)
-            progress (int)
-            block_temperature (float)
-            lid_temperature (float)
+        Returns a :class:`~bentolab.runs.RunState` with the lifecycle
+        state, progress (0-100), block + lid temperatures, and elapsed
+        seconds.
         """
         ...
 
 
 # ---------------------------------------------------------------------------
-# Profile validation helpers
+# Profile validation helpers (constants + validate_profile live in _validation.py)
 # ---------------------------------------------------------------------------
-
-# Instrument temperature limits (Bento Lab Pro V1.4)
-TEMP_MIN = 4.0
-TEMP_MAX = 100.0
-LID_TEMP_MIN = 30.0
-LID_TEMP_MAX = 115.0
-DURATION_MIN = 0
-DURATION_MAX = 86_400  # 24 hours
-CYCLES_MIN = 1
-CYCLES_MAX = 999
-
-
-def _validate_profile(profile_dict: dict[str, Any]) -> tuple[bool, list[str], list[str]]:
-    """Validate a PCR profile dict without hardware side effects.
-
-    Returns (ok, errors, warnings).
-    """
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    # 1. Build PCRProfile from dict to normalize structure
-    try:
-        profile = PCRProfile.from_dict(profile_dict)
-    except (ValueError, KeyError, TypeError) as exc:
-        errors.append(f"Invalid profile structure: {exc}")
-        return False, errors, warnings
-
-    # 2. Name
-    if not profile.name or profile.name == "Untitled":
-        warnings.append("Profile has no meaningful name")
-
-    # 3. Lid temperature
-    if profile.lid_temperature < LID_TEMP_MIN or profile.lid_temperature > LID_TEMP_MAX:
-        errors.append(
-            f"Lid temperature {profile.lid_temperature} C is outside "
-            f"safe range ({LID_TEMP_MIN}-{LID_TEMP_MAX} C)"
-        )
-
-    # 4. Initial denaturation
-    _validate_step(errors, warnings, "initial_denaturation", profile.initial_denaturation)
-
-    # 5. Cycles
-    if not profile.cycles:
-        warnings.append("Profile has no thermal cycles (denaturation/annealing/extension)")
-    for i, cycle in enumerate(profile.cycles):
-        prefix = f"cycle[{i}]"
-        if cycle.repeat_count < CYCLES_MIN or cycle.repeat_count > CYCLES_MAX:
-            errors.append(
-                f"{prefix} repeat_count {cycle.repeat_count} is outside "
-                f"allowed range ({CYCLES_MIN}-{CYCLES_MAX})"
-            )
-        _validate_step(errors, warnings, f"{prefix}.denaturation", cycle.denaturation)
-        _validate_step(errors, warnings, f"{prefix}.annealing", cycle.annealing)
-        _validate_step(errors, warnings, f"{prefix}.extension", cycle.extension)
-
-    # 6. Final extension
-    _validate_step(errors, warnings, "final_extension", profile.final_extension)
-
-    # 7. Hold temperature
-    if profile.hold_temperature < 0 or profile.hold_temperature > TEMP_MAX:
-        warnings.append(f"Hold temperature {profile.hold_temperature} C is unusual")
-
-    return len(errors) == 0, errors, warnings
-
-
-def _validate_step(
-    errors: list[str],
-    warnings: list[str],
-    label: str,
-    step: Any,
-) -> None:
-    temp = step.temperature
-    dur = step.duration
-    if temp < TEMP_MIN or temp > TEMP_MAX:
-        errors.append(
-            f"{label} temperature {temp} C is outside instrument range ({TEMP_MIN}-{TEMP_MAX} C)"
-        )
-    if dur < DURATION_MIN or dur > DURATION_MAX:
-        errors.append(
-            f"{label} duration {dur}s is outside allowed range ({DURATION_MIN}-{DURATION_MAX}s)"
-        )
 
 
 # ---------------------------------------------------------------------------
 # Device discovery helpers
 # ---------------------------------------------------------------------------
+
+
+def _http_error_body(
+    code: str,
+    human_message: str,
+    operator_hint: str,
+    *,
+    status_code: int,
+    retryable: bool,
+    details: dict[str, Any] | None = None,
+) -> HTTPException:
+    """Build the canonical ErrorResponse-shaped HTTPException.
+
+    All endpoints emit errors with the same envelope (code, severity,
+    human_message, operator_hint, retryable, details). This helper
+    keeps the envelope shape in one place so a future schema change
+    doesn't require touching every handler.
+    """
+    body: dict[str, Any] = {
+        "code": code,
+        "severity": "error",
+        "human_message": human_message,
+        "operator_hint": operator_hint,
+        "retryable": retryable,
+        "details": details if details is not None else {},
+    }
+    return HTTPException(status_code=status_code, detail=body)
 
 
 def _device_from_discovery(item: tuple[Any, Any]) -> DeviceInfo:
@@ -298,10 +243,9 @@ async def _status(request: Request) -> StatusResponse:
             ],
         )
 
-    temps = TemperatureSnapshot(
-        current=float(raw.block_temperature),
-        lid=float(raw.lid_temperature),
+    temps = TemperatureSnapshot.from_readings(
         block=float(raw.block_temperature),
+        lid=float(raw.lid_temperature),
     )
     run_info = None
     if raw.running:
@@ -321,70 +265,32 @@ async def _status(request: Request) -> StatusResponse:
 
 async def _validate_profile_handler(body: ProfileValidationRequest) -> ProfileValidationResponse:
     """POST /profiles/validate -- validate a PCR profile without hardware."""
-    ok, errors, warnings = _validate_profile(body.profile)
+    ok, errors, warnings, _profile = validate_profile(body.profile)
     return ProfileValidationResponse(ok=ok, errors=errors, warnings=warnings)
 
 
 async def _dry_run(body: DryRunRequest) -> DryRunResponse:
     """POST /runs/dry-run -- simulate a run without hardware."""
-    # 1. Validate the profile
-    ok, errors, warnings = _validate_profile(body.profile)
+    # 1. Validate the profile (gets the parsed profile in one pass)
+    ok, errors, warnings, profile = validate_profile(body.profile)
     if not ok:
         return DryRunResponse(ok=False, errors=errors)
-
-    # 2. Build PCRProfile for simulation
-    try:
-        profile = PCRProfile.from_dict(body.profile)
-    except (ValueError, KeyError, TypeError) as exc:
-        return DryRunResponse(ok=False, errors=[str(exc)])
+    assert profile is not None  # noqa: S101  type-narrowing for pyright: ok=True guarantees a parsed profile
 
     total_duration = profile.estimated_runtime_seconds()
 
-    # 3. Build simulation steps
-    steps: list[DryRunStep] = []
-
-    # Initial denaturation
-    steps.append(
+    # 3. Build simulation steps from the shared iter_steps generator.
+    #    Same walking order as the instrument execution: initial
+    #    denaturation, then each cycle's denat/anneal/extend repeated
+    #    repeat_count times, then final extension.
+    steps = [
         DryRunStep(
-            phase="initial_denaturation",
-            temperature=profile.initial_denaturation.temperature,
-            duration_s=profile.initial_denaturation.duration,
+            phase=phase,
+            temperature=step.temperature,
+            duration_s=step.duration,
         )
-    )
-
-    # Cycles
-    for i, cycle in enumerate(profile.cycles):
-        for _ in range(cycle.repeat_count):
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_denaturation",
-                    temperature=cycle.denaturation.temperature,
-                    duration_s=cycle.denaturation.duration,
-                )
-            )
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_annealing",
-                    temperature=cycle.annealing.temperature,
-                    duration_s=cycle.annealing.duration,
-                )
-            )
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_extension",
-                    temperature=cycle.extension.temperature,
-                    duration_s=cycle.extension.duration,
-                )
-            )
-
-    # Final extension
-    steps.append(
-        DryRunStep(
-            phase="final_extension",
-            temperature=profile.final_extension.temperature,
-            duration_s=profile.final_extension.duration,
-        )
-    )
+        for phase, step in profile.iter_steps()
+    ]
 
     return DryRunResponse(
         ok=True,
@@ -412,40 +318,30 @@ async def _start_run(body: RunRequest, request: Request) -> RunAcceptedResponse:
             approval_id=body.approval_id,
         )
     except PreflightFailedError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=400,
-            detail={
-                "code": "preflight_failed",
-                "severity": "error",
-                "human_message": "Preflight checks failed",
-                "operator_hint": "; ".join(exc.errors),
-                "retryable": True,
-                "details": {"errors": exc.errors},
-            },
+            retryable=True,
+            code="preflight_failed",
+            human_message="Preflight checks failed",
+            operator_hint="; ".join(exc.errors),
+            details={"errors": exc.errors},
         ) from exc
     except ApprovalRequiredError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=400,
-            detail={
-                "code": "approval_required",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Supply a gateway approval_id in the request body",
-                "retryable": True,
-                "details": {},
-            },
+            retryable=True,
+            code="approval_required",
+            human_message=str(exc),
+            operator_hint="Supply a gateway approval_id in the request body",
         ) from exc
     except RunStartFailedError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=500,
-            detail={
-                "code": "run_start_failed",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check BLE connection and device state, then retry",
-                "retryable": True,
-                "details": {"run_id": exc.run_id},
-            },
+            retryable=True,
+            code="run_start_failed",
+            human_message=str(exc),
+            operator_hint="Check BLE connection and device state, then retry",
+            details={"run_id": exc.run_id},
         ) from exc
 
     return RunAcceptedResponse(
@@ -462,16 +358,13 @@ async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDet
     try:
         detail = await service.get_run_status(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
 
     progress = (
@@ -483,10 +376,9 @@ async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDet
         else None
     )
     temperature = (
-        TemperatureSnapshot(
-            current=detail.temperature.block,
-            lid=detail.temperature.lid,
+        TemperatureSnapshot.from_readings(
             block=detail.temperature.block,
+            lid=detail.temperature.lid,
         )
         if detail.temperature is not None
         else None
@@ -506,28 +398,22 @@ async def _abort_run(run_id: str, request: Request) -> RunAbortResponse:
     try:
         aborted = await service.abort_run(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
     except CannotAbortError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=409,
-            detail={
-                "code": "cannot_abort",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Only active runs can be aborted",
-                "retryable": False,
-                "details": {"run_id": run_id, "state": exc.state},
-            },
+            retryable=False,
+            code="cannot_abort",
+            human_message=str(exc),
+            operator_hint="Only active runs can be aborted",
+            details={"run_id": run_id, "state": exc.state},
         ) from exc
 
     return RunAbortResponse(
@@ -543,16 +429,13 @@ async def _get_results(run_id: str, request: Request) -> RunResultResponse:
     try:
         results = service.get_results(run_id)
     except RunNotFoundError as exc:
-        raise HTTPException(
+        raise _http_error_body(
             status_code=404,
-            detail={
-                "code": "run_not_found",
-                "severity": "error",
-                "human_message": str(exc),
-                "operator_hint": "Check the run ID",
-                "retryable": False,
-                "details": {"run_id": run_id},
-            },
+            retryable=False,
+            code="run_not_found",
+            human_message=str(exc),
+            operator_hint="Check the run ID",
+            details={"run_id": run_id},
         ) from exc
 
     return RunResultResponse(

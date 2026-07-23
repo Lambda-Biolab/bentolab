@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import IO
 
 from ._data_dirs import runs_dir
+from ._slugs import slug_for
 
 
 class SessionLogger:
@@ -33,7 +34,7 @@ class SessionLogger:
         self.log_dir = Path(log_dir) if log_dir else runs_dir()
         self.log_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-        self.log_file = self.log_dir / f"{ts}_{_safe_slug(session_name)}.jsonl"
+        self.log_file = self.log_dir / f"{ts}_{slug_for(session_name)}.jsonl"
         self.start_time = datetime.now(tz=UTC)
         self._count = 0
         self._fp: IO[str] | None = open(self.log_file, "a", encoding="utf-8")  # noqa: SIM115
@@ -132,8 +133,3 @@ class SessionLogger:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-
-def _safe_slug(name: str) -> str:
-    keep = "-_."
-    return "".join(c if c.isalnum() or c in keep else "-" for c in name).strip("-")
