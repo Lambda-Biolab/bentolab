@@ -45,9 +45,9 @@ class PCRProfile:
     """A complete PCR thermal cycling profile."""
 
     name: str = "Untitled"
-    initial_denaturation: ThermalStep = field(default_factory=lambda: ThermalStep(95.0, 180))
+    initial_denaturation: ThermalStep = field(default_factory=lambda: _DEFAULT_INITIAL_DENATURATION)
     cycles: list[CycleStep] = field(default_factory=list)
-    final_extension: ThermalStep = field(default_factory=lambda: ThermalStep(72.0, 300))
+    final_extension: ThermalStep = field(default_factory=lambda: _DEFAULT_FINAL_EXTENSION)
     hold_temperature: float = 4.0
     lid_temperature: float = 110.0
     notes: str = ""
@@ -153,6 +153,15 @@ class PCRProfile:
         from ._profile_io import profile_from_yaml_file
 
         return profile_from_yaml_file(path)
+
+
+# Module-level constants — single source of truth for default thermal
+# parameters. _profile_io.profile_from_dict uses the same constants for
+# its fallback paths.
+_DEFAULT_INITIAL_DENATURATION = ThermalStep(95.0, 180)
+_DEFAULT_FINAL_EXTENSION = ThermalStep(72.0, 300)
+_DEFAULT_HOLD_TEMPERATURE = 4.0
+_DEFAULT_LID_TEMPERATURE = 110.0
 
 
 @dataclass
