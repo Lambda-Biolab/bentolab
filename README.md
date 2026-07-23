@@ -33,25 +33,35 @@ uv pip install -r requirements.txt
 ## Library Usage
 
 ```python
-from bentolab import BentoLabBLE, PCRProfile
+from bentolab import BentoLabBLE, PCRProfile, ThermalStep, CycleStep
 
 async def main():
     lab = BentoLabBLE()
     await lab.connect()
 
-    profile = PCRProfile(
-        name="Standard PCR",
-        initial_denaturation=(95, 180),
-        cycles=35,
-        denaturation=(95, 30),
-        annealing=(58, 30),
-        extension=(72, 60),
-        final_extension=(72, 300),
+    # Build a profile from the standard 3-step PCR pattern
+    profile = PCRProfile.simple(num_cycles=35)
+
+    # Or compose it explicitly:
+    custom = PCRProfile(
+        name="HF-Pgl3-EGFP-Puro-linear",
+        initial_denaturation=ThermalStep(95.0, 300),
+        cycles=[
+            CycleStep(
+                denaturation=ThermalStep(98.0, 10),
+                annealing=ThermalStep(60.0, 30),
+                extension=ThermalStep(72.0, 150),
+                repeat_count=35,
+            )
+        ],
+        final_extension=ThermalStep(72.0, 300),
+        lid_temperature=110.0,
     )
 
-    await lab.start_pcr(profile)
-    state = await lab.get_state()
-    print(f"Cycle {state.current_cycle}/{state.total_cycles} @ {state.block_temperature}C")
+    # Run with live progress updates
+    async for state in lab.run_profile(custom):
+        print(f"{state.state.value}  block={state.block_temperature}C  "
+              f"progress={state.progress}%")
 ```
 
 ## Command-line interface

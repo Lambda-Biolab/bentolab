@@ -8,15 +8,32 @@ captures and APK decompilation -- no public API or SDK exists.
 
 ```text
 bentolab/
+  __init__.py        # Public API re-exports
   ble_client.py      # Async BLE client (bleak) — primary transport
   wifi_client.py     # HTTP/WS client for V1.31 unit (stub, protocol TBD)
   protocol.py        # NUS framing, command/response codec, UUID tables
   models.py          # Domain types: PCRProfile, DeviceState, ThermalStep
-  thermocycler.py    # Unified high-level interface (BLE + Wi-Fi)
+  runs.py            # Unified run lifecycle + telemetry (RunLifecycle, RunState, RunManager)
+  profiles.py        # Profile filesystem store (YAML in XDG data dir)
+  devices.py         # Device registry (JSON in XDG config dir)
+  _logging.py        # BLE/HTTP session logger (NDJSON)
+  _data_dirs.py      # XDG path resolution
+  _profile_io.py     # Profile serialization (YAML/dict) for PCRProfile
+  _store.py          # Atomic file write + backup helpers
+  cli/               # Typer CLI (scan, status, monitor, run, stop, profile, logs)
+  api/               # FastAPI HTTP wrapper
+    app.py           # Routes + dependency wiring
+    _run_service.py  # Run orchestration service (preflight, start, abort, status)
+    models.py        # Pydantic request/response models
 tools/               # Standalone debug scripts (scanner, commander, monitor)
 tests/               # pytest + pytest-asyncio, all mocked (no hardware)
 docs/                # Protocol RE findings (GATT profile, commands, firmware)
 ```
+
+Two transport adapters exist on paper (`ble_client.BentoLabBLE` and
+`wifi_client.BentoLabWiFi`) but only BLE has a real protocol. The Wi-Fi
+client is a stub kept aligned with BLE's public surface so the second
+adapter can be slotted in without an API break.
 
 ## Target Devices
 
@@ -78,6 +95,8 @@ Run with `pytest -m hardware` when a Bento Lab is physically connected.
 | `bentolab/protocol.py` | Complete protocol codec (commands, responses, UUIDs) |
 | `bentolab/ble_client.py` | Async BLE client with connection mgmt and PCR run |
 | `bentolab/models.py` | PCRProfile, DeviceState, ThermalStep dataclasses |
+| `bentolab/runs.py` | Unified run lifecycle (state machine + telemetry) |
+| `bentolab/api/_run_service.py` | Run orchestration service for HTTP API |
 | `tests/test_protocol.py` | Protocol encode/decode tests from HCI capture data |
 | `docs/protocol-commands.md` | Full command reference |
 | `docs/ble-gatt-profile.md` | GATT service/characteristic map |
