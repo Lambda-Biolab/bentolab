@@ -34,6 +34,156 @@ from bentolab.protocol import lookup_uuid
 
 console = Console()
 
+
+def _parse_optional_int(parts: list[str], default: int) -> int:
+    """Parse an optional integer argument from a split-arg list.
+
+    Returns ``default`` if the list is empty or the first element isn't
+    an integer (e.g. user typed ``notify-all foo``). Used by the
+    ``notify``/``notify-all`` commands.
+    """
+    if not parts:
+        return default
+    with contextlib.suppress(ValueError):
+        return int(parts[0])
+    return default
+
+
+def _make_notify_event_cb(char_uuid: str, events: list[dict]):
+    """Build a Bleak notification callback that appends to ``events`` and prints.
+
+    Pulled out of ``cmd_notify_all``/``cmd_notify`` to keep the per-char
+    ``events.append``/``console.print`` body out of the function-level
+    complexity budget. ``events`` is mutated in place.
+    """
+
+    def callback(_sender, data: bytearray) -> None:
+        now = datetime.now(tz=UTC)
+        hex_str = data.hex()
+        events.append({"time": now.isoformat(), "uuid": char_uuid, "hex": hex_str})
+        console.print(
+            f"[dim]{now.strftime('%H:%M:%S.%f')[:-3]}[/dim] "
+            f"[cyan]{char_uuid[:23]}[/cyan] "
+            f"[white]{hex_str}[/white]"
+        )
+
+    return callback
+
+
+def _format_char_properties(properties: list[str]) -> str:
+    """Render a Bleak characteristic-properties list as a rich-color string.
+
+    Each recognised property (``read``/``write``/``write-without-response``/
+    ``notify``/``indicate``) gets a distinct color so the GATT tree is
+    scannable. Unrecognised properties are ignored — bleak adds new ones
+    occasionally and we don't want to crash on unknown values.
+    """
+    prop_colors: list[str] = []
+    if "read" in properties:
+        prop_colors.append("[green]read[/green]")
+    if "write" in properties:
+        prop_colors.append("[yellow]write[/yellow]")
+    if "write-without-response" in properties:
+        prop_colors.append("[yellow]write-nr[/yellow]")
+    if "notify" in properties:
+        prop_colors.append("[magenta]notify[/magenta]")
+    if "indicate" in properties:
+        prop_colors.append("[magenta]indicate[/magenta]")
+    return ", ".join(prop_colors)
+
+
+_FUZZ_COMMON_PAYLOADS: list[bytes] = [
+    b"\x00",
+    b"\x01",
+    b"\x02",
+    b"\x03",
+    b"\xff",
+    b"\x00\x00",
+    b"\x01\x00",
+    b"\x00\x01",
+    b"\xff\xff",
+    b"\x01\x01",
+    b"\x01\x02",
+    b"\x01\x03",
+    b"\x02\x01",
+    b"\x10\x00",
+    b"\x10\x01",
+    b"\x00" * 4,
+    b"\x00" * 8,
+    b"\x00" * 16,
+    b"\x00" * 20,
+]
+
+_FUZZ_RANDOM_LENGTHS: list[int] = [1, 2, 4, 8, 16, 20]
+_FUZZ_RANDOM_PER_LENGTH = 5
+_FUZZ_PAYLOAD_DELAY_S = 0.1
+
+
+async def _run_fuzz_strategy(strategy: str, client, uuid: str) -> list[dict]:
+    """Dispatch to the per-strategy implementation. Returns the results list.
+
+    Pulled out of ``cmd_fuzz`` so the strategy-selection body stays small
+    and each strategy can be reasoned about in isolation.
+    """
+    if strategy == "sequential":
+        return await _fuzz_sequential(client, uuid)
+    if strategy == "common":
+        return await _fuzz_common(client, uuid)
+    if strategy == "random":
+        return await _fuzz_random(client, uuid)
+    return []
+
+
+async def _fuzz_sequential(client, uuid: str) -> list[dict]:
+    """Send single bytes 0x00..0xFF one at a time."""
+    results: list[dict] = []
+    for i in range(256):
+        data = bytes([i])
+        try:
+            await client.write_gatt_char(uuid, data, response=True)
+            console.print(f"  [green]0x{i:02x}[/green] — accepted")
+            results.append({"byte": f"0x{i:02x}", "status": "accepted"})
+        except BleakError as e:
+            console.print(f"  [red]0x{i:02x}[/red] — {e}")
+            results.append({"byte": f"0x{i:02x}", "status": str(e)})
+        await asyncio.sleep(_FUZZ_PAYLOAD_DELAY_S)
+    return results
+
+
+async def _fuzz_common(client, uuid: str) -> list[dict]:
+    """Send the curated list of common embedded-device command patterns."""
+    results: list[dict] = []
+    for data in _FUZZ_COMMON_PAYLOADS:
+        try:
+            await client.write_gatt_char(uuid, data, response=True)
+            console.print(f"  [green]{data.hex()}[/green] — accepted")
+            results.append({"hex": data.hex(), "status": "accepted"})
+        except BleakError as e:
+            console.print(f"  [red]{data.hex()}[/red] — {e}")
+            results.append({"hex": data.hex(), "status": str(e)})
+        await asyncio.sleep(_FUZZ_PAYLOAD_DELAY_S)
+    return results
+
+
+async def _fuzz_random(client, uuid: str) -> list[dict]:
+    """Send ``_FUZZ_RANDOM_PER_LENGTH`` random payloads of each test length."""
+    import os
+
+    results: list[dict] = []
+    for length in _FUZZ_RANDOM_LENGTHS:
+        for _ in range(_FUZZ_RANDOM_PER_LENGTH):
+            data = os.urandom(length)
+            try:
+                await client.write_gatt_char(uuid, data, response=True)
+                console.print(f"  [green]{data.hex()}[/green] ({length}B) — accepted")
+                results.append({"hex": data.hex(), "len": length, "status": "accepted"})
+            except BleakError as e:
+                console.print(f"  [red]{data.hex()}[/red] ({length}B) — {e}")
+                results.append({"hex": data.hex(), "len": length, "status": str(e)})
+            await asyncio.sleep(_FUZZ_PAYLOAD_DELAY_S)
+    return results
+
+
 HELP_TEXT = """\
 [bold]BLE Commander — Commands[/bold]
 
@@ -164,30 +314,20 @@ class BentoCommander:
             return
 
         tree = Tree("[bold]GATT Profile[/bold]")
+        service_count = 0
         for service in self.client.services:
+            service_count += 1
             svc_name = lookup_uuid(str(service.uuid))
             svc_branch = tree.add(f"[bold cyan]{service.uuid}[/bold cyan] — {svc_name}")
             for char in service.characteristics:
                 char_name = lookup_uuid(str(char.uuid))
-                prop_colors = []
-                if "read" in char.properties:
-                    prop_colors.append("[green]read[/green]")
-                if "write" in char.properties:
-                    prop_colors.append("[yellow]write[/yellow]")
-                if "write-without-response" in char.properties:
-                    prop_colors.append("[yellow]write-nr[/yellow]")
-                if "notify" in char.properties:
-                    prop_colors.append("[magenta]notify[/magenta]")
-                if "indicate" in char.properties:
-                    prop_colors.append("[magenta]indicate[/magenta]")
-
                 svc_branch.add(
                     f"[white]{char.uuid}[/white] — {char_name}\n"
-                    f"  Properties: {', '.join(prop_colors)}"
+                    f"  Properties: {_format_char_properties(char.properties)}"
                 )
 
         console.print(tree)
-        self.log_entry("services", f"Enumerated {len(list(self.client.services))} services")
+        self.log_entry("services", f"Enumerated {service_count} services")
 
     async def cmd_read(self, args: str):
         """Read a characteristic value."""
@@ -262,11 +402,11 @@ class BentoCommander:
             return
 
         uuid = parts[0]
-        duration = int(parts[1]) if len(parts) > 1 else 30
+        duration = _parse_optional_int(parts[1:], default=30)
 
-        events = []
+        events: list[dict] = []
 
-        def callback(_sender, data: bytearray):
+        def callback(_sender, data: bytearray) -> None:
             now = datetime.now(tz=UTC)
             hex_str = data.hex()
             events.append({"time": now.isoformat(), "hex": hex_str})
@@ -305,17 +445,8 @@ class BentoCommander:
             console.print("[red]Not connected.[/red]")
             return
 
-        duration = 30
-        parts = args.strip().split()
-        if parts:
-            with contextlib.suppress(ValueError):
-                duration = int(parts[0])
-
-        notifiable = []
-        for service in self.client.services:
-            for char in service.characteristics:
-                if "notify" in char.properties or "indicate" in char.properties:
-                    notifiable.append(char)
+        duration = _parse_optional_int(args.strip().split(), default=30)
+        notifiable = self._collect_notifiable_chars()
 
         if not notifiable:
             console.print("[yellow]No notifiable characteristics found.[/yellow]")
@@ -325,40 +456,41 @@ class BentoCommander:
             f"[bold]Subscribing to {len(notifiable)} characteristics for {duration}s...[/bold]"
         )
 
-        events = []
+        events: list[dict] = []
+        await self._subscribe_to_all(notifiable, events)
+        await asyncio.sleep(duration)
+        await self._unsubscribe_all(notifiable)
 
-        def make_cb(char_uuid):
-            def callback(_sender, data: bytearray):
-                now = datetime.now(tz=UTC)
-                hex_str = data.hex()
-                events.append({"time": now.isoformat(), "uuid": char_uuid, "hex": hex_str})
-                console.print(
-                    f"[dim]{now.strftime('%H:%M:%S.%f')[:-3]}[/dim] "
-                    f"[cyan]{char_uuid[:23]}[/cyan] "
-                    f"[white]{hex_str}[/white]"
-                )
+        console.print(f"[yellow]Got {len(events)} total notifications.[/yellow]")
+        self.log_entry("notify-all", "all", {"duration": duration, "event_count": len(events)})
 
-            return callback
+    def _collect_notifiable_chars(self) -> list:
+        """Return all characteristics across services that support notify/indicate."""
+        notifiable: list = []
+        for service in self.client.services:
+            for char in service.characteristics:
+                if "notify" in char.properties or "indicate" in char.properties:
+                    notifiable.append(char)
+        return notifiable
 
+    async def _subscribe_to_all(self, notifiable: list, events: list[dict]) -> None:
+        """Subscribe to each characteristic; per-char failures print but don't abort."""
         for char in notifiable:
             uuid_str = str(char.uuid)
             try:
-                await self.client.start_notify(char, make_cb(uuid_str))
+                await self.client.start_notify(char, _make_notify_event_cb(uuid_str, events))
                 self.active_notifies.add(uuid_str)
             except BleakError as e:
                 console.print(f"  [red]Failed {uuid_str}: {e}[/red]")
 
-        await asyncio.sleep(duration)
-
+    async def _unsubscribe_all(self, notifiable: list) -> None:
+        """Stop notifications on every previously-subscribed characteristic (best-effort)."""
         for char in notifiable:
             try:
                 await self.client.stop_notify(char)
                 self.active_notifies.discard(str(char.uuid))
             except BleakError:
                 pass
-
-        console.print(f"[yellow]Got {len(events)} total notifications.[/yellow]")
-        self.log_entry("notify-all", "all", {"duration": duration, "event_count": len(events)})
 
     async def cmd_fuzz(self, args: str):
         """Fuzz a writable characteristic with test payloads."""
@@ -374,6 +506,16 @@ class BentoCommander:
         uuid = parts[0]
         strategy = parts[1] if len(parts) > 1 else "sequential"
 
+        if not await self._confirm_fuzz_prompt():
+            return
+
+        console.print(f"[bold]Fuzzing {uuid} with strategy: {strategy}[/bold]")
+        results = await _run_fuzz_strategy(strategy, self.client, uuid)
+        console.print(f"[bold]Fuzz complete. {len(results)} payloads tested.[/bold]")
+        self.log_entry("fuzz", uuid, {"strategy": strategy, "results": results})
+
+    async def _confirm_fuzz_prompt(self) -> bool:
+        """Display a warning panel and ask the user to confirm before fuzzing."""
         console.print(
             Panel(
                 "[bold red]WARNING:[/bold red] Fuzzing sends arbitrary data to the device.\n"
@@ -383,79 +525,12 @@ class BentoCommander:
                 border_style="red",
             )
         )
-
         session = PromptSession()
         confirm = await session.prompt_async("Continue? [y/N] ")
         if confirm.lower() != "y":
             console.print("[dim]Aborted.[/dim]")
-            return
-
-        results = []
-        console.print(f"[bold]Fuzzing {uuid} with strategy: {strategy}[/bold]")
-
-        if strategy == "sequential":
-            # Send single bytes 0x00 through 0xFF
-            for i in range(256):
-                data = bytes([i])
-                try:
-                    await self.client.write_gatt_char(uuid, data, response=True)
-                    console.print(f"  [green]0x{i:02x}[/green] — accepted")
-                    results.append({"byte": f"0x{i:02x}", "status": "accepted"})
-                except BleakError as e:
-                    console.print(f"  [red]0x{i:02x}[/red] — {e}")
-                    results.append({"byte": f"0x{i:02x}", "status": str(e)})
-                await asyncio.sleep(0.1)
-
-        elif strategy == "common":
-            # Common command patterns for embedded devices
-            payloads = [
-                b"\x00",
-                b"\x01",
-                b"\x02",
-                b"\x03",
-                b"\xff",
-                b"\x00\x00",
-                b"\x01\x00",
-                b"\x00\x01",
-                b"\xff\xff",
-                b"\x01\x01",
-                b"\x01\x02",
-                b"\x01\x03",
-                b"\x02\x01",
-                b"\x10\x00",
-                b"\x10\x01",
-                b"\x00" * 4,
-                b"\x00" * 8,
-                b"\x00" * 16,
-                b"\x00" * 20,
-            ]
-            for data in payloads:
-                try:
-                    await self.client.write_gatt_char(uuid, data, response=True)
-                    console.print(f"  [green]{data.hex()}[/green] — accepted")
-                    results.append({"hex": data.hex(), "status": "accepted"})
-                except BleakError as e:
-                    console.print(f"  [red]{data.hex()}[/red] — {e}")
-                    results.append({"hex": data.hex(), "status": str(e)})
-                await asyncio.sleep(0.1)
-
-        elif strategy == "random":
-            import os
-
-            for length in [1, 2, 4, 8, 16, 20]:
-                for _ in range(5):
-                    data = os.urandom(length)
-                    try:
-                        await self.client.write_gatt_char(uuid, data, response=True)
-                        console.print(f"  [green]{data.hex()}[/green] ({length}B) — accepted")
-                        results.append({"hex": data.hex(), "len": length, "status": "accepted"})
-                    except BleakError as e:
-                        console.print(f"  [red]{data.hex()}[/red] ({length}B) — {e}")
-                        results.append({"hex": data.hex(), "len": length, "status": str(e)})
-                    await asyncio.sleep(0.1)
-
-        console.print(f"[bold]Fuzz complete. {len(results)} payloads tested.[/bold]")
-        self.log_entry("fuzz", uuid, {"strategy": strategy, "results": results})
+            return False
+        return True
 
     async def cmd_log(self, _args: str):
         """Show session log summary."""
@@ -485,7 +560,24 @@ class BentoCommander:
 
     async def run(self):
         """Main REPL loop."""
-        commands = {
+        commands = self._command_registry()
+        completer = WordCompleter(
+            [*commands.keys(), "help", "quit", "exit"],
+            ignore_case=True,
+        )
+        session = PromptSession(completer=completer)
+        console.print(Panel(HELP_TEXT, title="BLE Commander", border_style="blue"))
+
+        while True:
+            keep_going = await self._repl_iteration(session, commands)
+            if not keep_going:
+                break
+
+        await self._auto_export_on_exit()
+
+    def _command_registry(self) -> dict:
+        """Map of command name → bound method. Kept in one place for tab completion."""
+        return {
             "scan": self.cmd_scan,
             "connect": self.cmd_connect,
             "disconnect": self.cmd_disconnect,
@@ -499,46 +591,50 @@ class BentoCommander:
             "export": self.cmd_export,
         }
 
-        completer = WordCompleter(
-            [*commands.keys(), "help", "quit", "exit"],
-            ignore_case=True,
-        )
+    def _repl_prompt(self) -> str:
+        """Render the REPL prompt based on connection state."""
+        if self.is_connected:
+            return f"[{self.address[:17]}] > "
+        return "ble> "
 
-        session = PromptSession(completer=completer)
-        console.print(Panel(HELP_TEXT, title="BLE Commander", border_style="blue"))
+    async def _repl_iteration(self, session: PromptSession, commands: dict) -> bool:
+        """One read-eval-print iteration. Returns False when the REPL should exit."""
+        try:
+            with patch_stdout():
+                user_input = await session.prompt_async(self._repl_prompt())
+        except KeyboardInterrupt:
+            console.print("\n[dim]Use 'quit' to exit[/dim]")
+            return True
+        except EOFError:
+            return False
 
-        while True:
-            try:
-                prompt_text = f"[{self.address[:17]}] > " if self.is_connected else "ble> "
+        user_input = user_input.strip()
+        if not user_input:
+            return True
 
-                with patch_stdout():
-                    user_input = await session.prompt_async(prompt_text)
+        return await self._dispatch_repl_command(user_input, commands)
 
-                user_input = user_input.strip()
-                if not user_input:
-                    continue
+    async def _dispatch_repl_command(self, user_input: str, commands: dict) -> bool:
+        """Route a single command line. Returns False for quit/exit."""
+        parts = user_input.split(maxsplit=1)
+        cmd = parts[0].lower()
+        cmd_args = parts[1] if len(parts) > 1 else ""
 
-                parts = user_input.split(maxsplit=1)
-                cmd = parts[0].lower()
-                cmd_args = parts[1] if len(parts) > 1 else ""
+        if cmd in ("quit", "exit"):
+            if self.is_connected:
+                await self.cmd_disconnect("")
+            return False
+        if cmd == "help":
+            console.print(HELP_TEXT)
+            return True
+        if cmd in commands:
+            await commands[cmd](cmd_args)
+            return True
+        console.print(f"[red]Unknown command: {cmd}. Type 'help' for usage.[/red]")
+        return True
 
-                if cmd in ("quit", "exit"):
-                    if self.is_connected:
-                        await self.cmd_disconnect("")
-                    break
-                elif cmd == "help":
-                    console.print(HELP_TEXT)
-                elif cmd in commands:
-                    await commands[cmd](cmd_args)
-                else:
-                    console.print(f"[red]Unknown command: {cmd}. Type 'help' for usage.[/red]")
-
-            except KeyboardInterrupt:
-                console.print("\n[dim]Use 'quit' to exit[/dim]")
-            except EOFError:
-                break
-
-        # Auto-export on exit
+    async def _auto_export_on_exit(self) -> None:
+        """Save the session log to a timestamped JSON if anything was logged."""
         if self.session_log:
             await self.cmd_export("")
 
