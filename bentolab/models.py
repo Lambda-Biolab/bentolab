@@ -120,6 +120,13 @@ class PCRProfile:
         - One cycle tuple per ``CycleStep`` looping from its extension stage
           back to its denaturation stage ``repeat_count`` times
         - Final stage: final extension
+        - Hold stage: a post-run hold at ``self.hold_temperature`` for
+          ``_DEFAULT_HOLD_DURATION_SECONDS`` (24 h) so the device firmware
+          maintains the idle setpoint between runs. The TUI's
+          :func:`stage_at` helper derives its synthetic "hold" UI state
+          from the same ``hold_temperature`` field via
+          :meth:`iter_steps`, so the protocol and the UI agree on the
+          post-run setpoint.
         """
         stages: list[tuple[float, int]] = [
             (self.initial_denaturation.temperature, self.initial_denaturation.duration)
@@ -135,6 +142,10 @@ class PCRProfile:
             cycles.append((extend_idx, denat_idx, cycle.repeat_count))
 
         stages.append((self.final_extension.temperature, self.final_extension.duration))
+        # Post-run hold so the device maintains ``hold_temperature`` between
+        # runs. 86_400 s (24 h) is well within int32 and a standard biotech
+        # default for overnight holds.
+        stages.append((self.hold_temperature, _DEFAULT_HOLD_DURATION_SECONDS))
         return stages, cycles
 
     def estimated_runtime_seconds(self) -> int:
@@ -182,6 +193,11 @@ _DEFAULT_INITIAL_DENATURATION = ThermalStep(95.0, 180)
 _DEFAULT_FINAL_EXTENSION = ThermalStep(72.0, 300)
 _DEFAULT_HOLD_TEMPERATURE = 4.0
 _DEFAULT_LID_TEMPERATURE = 110.0
+# Post-run hold duration emitted as a final protocol stage by
+# ``PCRProfile.to_stages_and_cycles``. 86_400 s (24 h) is a standard
+# biotech hold duration; the value is bounded by int32 max (≈68 years)
+# so it will not overflow the device's stage-duration field.
+_DEFAULT_HOLD_DURATION_SECONDS = 86_400
 
 
 @dataclass

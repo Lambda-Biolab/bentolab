@@ -58,6 +58,8 @@ def test_pcr_profile_to_stages_and_cycles_simple():
         (58.0, 30),
         (72.0, 60),
         (72.0, 300),
+        # 24 h hold at the configured hold_temperature (default 4 C).
+        (4.0, 86_400),
     ]
     assert cycles == [(4, 2, 30)]
 
@@ -83,10 +85,31 @@ def test_pcr_profile_to_stages_and_cycles_multi_step():
         final_extension=ThermalStep(72.0, 300),
     )
     stages, cycles = profile.to_stages_and_cycles()
-    assert len(stages) == 1 + 3 + 3 + 1  # initial + 2x(d,a,e) + final
+    # initial + 2x(d,a,e) + final + post-run hold
+    assert len(stages) == 1 + 3 + 3 + 1 + 1
     assert stages[0] == (95.0, 180)
-    assert stages[-1] == (72.0, 300)
+    assert stages[-1] == (4.0, 86_400)
+    assert stages[-2] == (72.0, 300)
     assert cycles == [(4, 2, 10), (7, 5, 25)]
+
+
+def test_pcr_profile_to_stages_and_cycles_respects_hold_temperature():
+    """A custom hold_temperature surfaces in the emitted hold stage (#12)."""
+    profile = PCRProfile(
+        name="custom-hold",
+        cycles=[
+            CycleStep(
+                denaturation=ThermalStep(95.0, 15),
+                annealing=ThermalStep(55.0, 20),
+                extension=ThermalStep(72.0, 30),
+                repeat_count=10,
+            ),
+        ],
+        final_extension=ThermalStep(72.0, 60),
+        hold_temperature=10.0,
+    )
+    stages, _cycles = profile.to_stages_and_cycles()
+    assert stages[-1] == (10.0, 86_400)
 
 
 def test_device_state_defaults():
