@@ -556,10 +556,10 @@ class TestGetRunStatus:
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
-        from bentolab.api.runs import RunStates
+        from bentolab.runs import RunLifecycle
 
         run_mgr = client.app.state.run_manager
-        run_mgr.transition_to(run_id, RunStates.COMPLETED)
+        run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         resp = client.get(f"/runs/{run_id}")
         assert resp.status_code == 200
@@ -638,10 +638,10 @@ class TestRunResults:
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
-        from bentolab.api.runs import RunStates
+        from bentolab.runs import RunLifecycle
 
         run_mgr = client.app.state.run_manager
-        run_mgr.transition_to(run_id, RunStates.COMPLETED)
+        run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         resp = client.get(f"/runs/{run_id}/results")
         assert resp.status_code == 200
@@ -747,10 +747,10 @@ class TestDeviceLock:
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
-        from bentolab.api.runs import RunStates
+        from bentolab.runs import RunLifecycle
 
         run_mgr = client.app.state.run_manager
-        run_mgr.transition_to(run_id, RunStates.COMPLETED)
+        run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         assert not run_mgr.is_locked
 
@@ -788,13 +788,13 @@ class TestAmbiguousFailure:
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
-        from bentolab.api.runs import RunStates
+        from bentolab.runs import RunLifecycle
 
         run_mgr = client.app.state.run_manager
         # Transition to review
-        run_mgr.transition_to(run_id, RunStates.UNKNOWN_REVIEW)
+        run_mgr.transition_to(run_id, RunLifecycle.UNKNOWN_REVIEW)
         # Try to transition back -- should fail
-        result = run_mgr.transition_to(run_id, RunStates.RUNNING)
+        result = run_mgr.transition_to(run_id, RunLifecycle.RUNNING)
         assert result is False
         # Lock is released
         assert not run_mgr.is_locked
