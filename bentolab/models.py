@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -78,6 +79,32 @@ class PCRProfile:
             final_extension=ThermalStep(*final_extension),
         )
 
+    def iter_steps(self) -> Iterator[tuple[str, ThermalStep]]:
+        """Yield ``(phase_label, ThermalStep)`` pairs in execution order.
+
+        Each cycle's three sub-steps are repeated ``repeat_count``
+        times, so the generator flattens the nested structure into a
+        single sequence matching what the instrument actually
+        performs. Phase labels:
+
+          - ``"initial_denaturation"``
+          - ``f"cycle_{i}_denaturation" | "_annealing" | "_extension"``
+          - ``"final_extension"``
+
+        Used by :meth:`estimated_runtime_seconds` (sums durations)
+        and by ``_dry_run`` in the HTTP API (builds a DryRunStep list).
+        :meth:`to_stages_and_cycles` does NOT use this generator because
+        it produces a different output shape (stage index tuples for
+        the device protocol, not expanded steps).
+        """
+        yield "initial_denaturation", self.initial_denaturation
+        for i, cycle in enumerate(self.cycles):
+            for _ in range(cycle.repeat_count):
+                yield f"cycle_{i}_denaturation", cycle.denaturation
+                yield f"cycle_{i}_annealing", cycle.annealing
+                yield f"cycle_{i}_extension", cycle.extension
+        yield "final_extension", self.final_extension
+
     def to_stages_and_cycles(
         self,
     ) -> tuple[list[tuple[float, int]], list[tuple[int, int, int]]]:
@@ -112,14 +139,9 @@ class PCRProfile:
 
     def estimated_runtime_seconds(self) -> int:
         """Sum of step durations across the program (excludes ramp time)."""
-        total = self.initial_denaturation.duration
-        for cycle in self.cycles:
-            per_cycle = (
-                cycle.denaturation.duration + cycle.annealing.duration + cycle.extension.duration
-            )
-            total += per_cycle * cycle.repeat_count
-        total += self.final_extension.duration
-        return total
+        return sum(
+            step.duration for _label, step in self.iter_steps()
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a YAML/JSON-friendly dict."""

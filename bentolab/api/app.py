@@ -279,51 +279,18 @@ async def _dry_run(body: DryRunRequest) -> DryRunResponse:
 
     total_duration = profile.estimated_runtime_seconds()
 
-    # 3. Build simulation steps
-    steps: list[DryRunStep] = []
-
-    # Initial denaturation
-    steps.append(
+    # 3. Build simulation steps from the shared iter_steps generator.
+    #    Same walking order as the instrument execution: initial
+    #    denaturation, then each cycle's denat/anneal/extend repeated
+    #    repeat_count times, then final extension.
+    steps = [
         DryRunStep(
-            phase="initial_denaturation",
-            temperature=profile.initial_denaturation.temperature,
-            duration_s=profile.initial_denaturation.duration,
+            phase=phase,
+            temperature=step.temperature,
+            duration_s=step.duration,
         )
-    )
-
-    # Cycles
-    for i, cycle in enumerate(profile.cycles):
-        for _ in range(cycle.repeat_count):
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_denaturation",
-                    temperature=cycle.denaturation.temperature,
-                    duration_s=cycle.denaturation.duration,
-                )
-            )
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_annealing",
-                    temperature=cycle.annealing.temperature,
-                    duration_s=cycle.annealing.duration,
-                )
-            )
-            steps.append(
-                DryRunStep(
-                    phase=f"cycle_{i}_extension",
-                    temperature=cycle.extension.temperature,
-                    duration_s=cycle.extension.duration,
-                )
-            )
-
-    # Final extension
-    steps.append(
-        DryRunStep(
-            phase="final_extension",
-            temperature=profile.final_extension.temperature,
-            duration_s=profile.final_extension.duration,
-        )
-    )
+        for phase, step in profile.iter_steps()
+    ]
 
     return DryRunResponse(
         ok=True,
