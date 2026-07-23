@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from bentolab.runs import RunLifecycle
-
 from pydantic import BaseModel, Field
+
+from bentolab.runs import RunLifecycle
 
 # ---------------------------------------------------------------------------
 # Health

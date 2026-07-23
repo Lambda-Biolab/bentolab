@@ -24,7 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..runs import RunLifecycle, RunManager, RunState, is_active, is_terminal
+from ..runs import RunLifecycle, RunManager, is_active, is_terminal
 from ._validation import validate_profile
 
 if TYPE_CHECKING:

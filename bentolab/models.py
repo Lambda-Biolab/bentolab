@@ -139,9 +139,7 @@ class PCRProfile:
 
     def estimated_runtime_seconds(self) -> int:
         """Sum of step durations across the program (excludes ramp time)."""
-        return sum(
-            step.duration for _label, step in self.iter_steps()
-        )
+        return sum(step.duration for _label, step in self.iter_steps())
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a YAML/JSON-friendly dict."""
