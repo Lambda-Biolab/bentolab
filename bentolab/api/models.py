@@ -131,7 +131,6 @@ class DryRunRequest(BaseModel):
     """Request body for POST /runs/dry-run."""
 
     profile: dict[str, Any] = Field(description="PCR profile as a JSON/YAML dict")
-    device_address: str | None = Field(default=None, description="BLE device address")
 
 
 class DryRunStep(BaseModel):
