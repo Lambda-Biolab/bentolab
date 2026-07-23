@@ -12,6 +12,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+]
 tools = [
     "construct>=2.10.0",
     "zeroconf>=0.80.0",
@@ -20,15 +24,26 @@ tools = [
     "aiohttp>=3.9.0",
     "prompt-toolkit>=3.0.0",
 ]
+tui = [
+    "textual>=0.79",
+]
+
+
+
+
 
 [project.scripts]
 bentolab = "bentolab.cli.main:main"
 
 [dependency-groups]
 dev = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "textual>=0.79",
     "ruff>=0.4.0",
+    "httpx>=0.27.0",  # required by fastapi.testclient.TestClient
     "pyright>=1.1.0",
     "complexipy>=0.8",
     "aiohttp>=3.9.0",
@@ -39,6 +54,8 @@ asyncio_mode = "auto"
 addopts = "-m \"not hardware\""
 markers = [
     "hardware: requires physical Bento Lab device",
+    "slow: slow-running tests (stress, soak, multi-second)",
+    "network: tests that require real BLE/Wi-Fi hardware or mock network I/O",
 ]
 
 [tool.ruff]
@@ -46,13 +63,27 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "C90"]
+select = ["E", "F", "I", "UP", "B", "SIM", "C90", "S", "RUF"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
 [tool.ruff.lint.per-file-ignores]
-"tools/*" = ["C901"]
+"tools/*" = ["C901", "S"]
+"tests/*" = ["S101", "S"]   # assert is pytest idiom; tests don't ship
+
+[tool.complexipy]
+max-complexity = 15
+exclude = ["tests/", "tools/"]
+
+[tool.coverage.run]
+source = ["bentolab"]
+omit = ["bentolab/_data_dirs.py"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
 
 [tool.pyright]
 pythonVersion = "3.11"
@@ -64,6 +95,13 @@ exclude = [
     "**/node_modules",
     "**/.*",
 ]
+typeCheckingMode = "standard"
+reportMissingTypeStubs = true
+reportOptionalSubscript = true
+reportOptionalMemberAccess = true
+reportOptionalOperand = true
+reportOptionalIterable = true
+reportOptionalCall = true
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -71,3 +109,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["bentolab*"]
+
+[tool.setuptools.package-data]
+"bentolab.tui" = ["style.tcss", "ascii-art/*.txt"]

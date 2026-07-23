@@ -1,16 +1,18 @@
 """Tests for BentoLabBLE client with mocked BLE."""
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from bentolab.ble_client import (
     BentoLabBLE,
     BentoLabCommandError,
     BentoLabConnectionError,
-    PCRRunState,
     ProfileData,
 )
 from bentolab.models import PCRProfile
 from bentolab.protocol import RunStatus, StatusBroadcast
+from bentolab.runs import RunLifecycle, RunState
 
 # --- Fixtures ---
 
@@ -28,7 +30,6 @@ def test_default_construction():
     lab = BentoLabBLE()
     assert lab.address is None
     assert not lab.is_connected
-    assert lab.auto_reconnect is True
 
 
 def test_construction_with_address():
@@ -48,9 +49,9 @@ def test_not_connected_by_default(lab):
 # --- Connection tests ---
 
 
-def test_check_connected_raises_when_not_connected(lab):
+def test_require_client_raises_when_not_connected(lab):
     with pytest.raises(BentoLabConnectionError, match="Not connected"):
-        lab._check_connected()
+        lab._require_client()
 
 
 # --- Error types ---
@@ -63,21 +64,22 @@ def test_error_hierarchy():
     assert issubclass(BentoLabCommandError, BentoLabError)
 
 
-# --- PCRRunState ---
+# --- RunState (was PCRRunState; unified into bentolab.runs) ---
 
 
-def test_pcr_run_state_defaults():
-    state = PCRRunState()
+def test_run_state_defaults():
+    state = RunState()
+    assert state.state == RunLifecycle.IDLE
     assert not state.running
     assert state.progress == 0
-    assert state.block_temperature == 0.0
-    assert state.lid_temperature == 0.0
+    assert state.block_temperature is None
+    assert state.lid_temperature is None
     assert state.elapsed_seconds == 0.0
 
 
-def test_pcr_run_state_values():
-    state = PCRRunState(
-        running=True,
+def test_run_state_values():
+    state = RunState(
+        state=RunLifecycle.RUNNING,
         progress=42,
         block_temperature=95.0,
         lid_temperature=110.0,
@@ -166,7 +168,11 @@ async def test_run_profile_flattens_and_forwards(lab):
 
     async def fake_run_pcr(**kwargs):
         captured.update(kwargs)
-        yield PCRRunState(running=False, progress=100, block_temperature=72.0)
+        yield RunState(
+            state=RunLifecycle.IDLE,
+            progress=100,
+            block_temperature=72.0,
+        )
 
     lab.run_pcr = fake_run_pcr  # type: ignore[method-assign]
 
@@ -181,10 +187,103 @@ async def test_run_profile_flattens_and_forwards(lab):
         (60.0, 20),
         (72.0, 40),
         (72.0, 180),
+        # Post-run hold stage emitted by to_stages_and_cycles (see #12).
+        (4.0, 86_400),
     ]
     assert captured["cycles"] == [(4, 2, 12)]
     assert captured["lid_temp"] == 108.0
     assert captured["poll_interval"] == 1.5
+
+
+# --- public start_run(profile) adapter (matches BleClientProtocol) ---
+
+
+async def test_start_run_adapter_flattens_profile_and_forwards(lab, monkeypatch):
+    """start_run(profile) delegates to _start_pcr_program with flattened args.
+
+    Regression: the BleClientProtocol contract in api/app.py declares
+    ``start_run(profile: PCRProfile)``. Before this adapter was added,
+    ``BentoLabBLE.start_run`` had a different signature and the
+    service-layer call would land the PCRProfile in ``name`` and skip
+    sending stages silently. This test pins the flattening behavior.
+    """
+    profile = PCRProfile.simple(
+        name="Protocol Probe",
+        num_cycles=5,
+        initial_denaturation=(95.0, 60),
+        denaturation=(95.0, 10),
+        annealing=(58.0, 15),
+        extension=(72.0, 30),
+        final_extension=(72.0, 120),
+    )
+
+    captured: dict = {}
+
+    async def fake_start_program(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
+
+    # Default lid_temp should come from profile.lid_temperature (110.0)
+    await lab.start_run(profile)
+
+    assert captured["name"] == "Protocol Probe"
+    assert captured["stages"] == [
+        (95.0, 60),
+        (95.0, 10),
+        (58.0, 15),
+        (72.0, 30),
+        (72.0, 120),
+        # Post-run hold stage emitted by to_stages_and_cycles (see #12).
+        (4.0, 86_400),
+    ]
+    assert captured["cycles"] == [(4, 2, 5)]  # (extend_idx, denat_idx, repeat_count)
+    assert captured["lid_temp"] == 110.0  # from profile.lid_temperature
+    assert captured["slot"] == 0
+
+
+async def test_start_run_adapter_accepts_lid_temp_override(lab, monkeypatch):
+    """start_run(profile, lid_temp=X) overrides the profile default."""
+    profile = PCRProfile.simple(name="Lid Override", num_cycles=3)
+
+    captured: dict = {}
+
+    async def fake_start_program(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
+    await lab.start_run(profile, lid_temp=95.0)
+
+    assert captured["lid_temp"] == 95.0  # override applied
+
+
+async def test_abort_run_delegates_to_stop_run(lab, monkeypatch):
+    """abort_run() is the public API name; stop_run() is the wire-level one."""
+    called = {"stop": False}
+
+    async def fake_stop_run():
+        called["stop"] = True
+
+    monkeypatch.setattr(lab, "stop_run", fake_stop_run)
+    await lab.abort_run()
+    assert called["stop"] is True
+
+
+async def test_get_run_status_combines_poll_and_status(lab, monkeypatch):
+    """get_run_status returns a typed RunState combining poll + status."""
+    monkeypatch.setattr(
+        lab,
+        "poll_run_status",
+        AsyncMock(return_value=RunStatus(running=True, checksum=42, progress=75)),
+    )
+    monkeypatch.setattr(lab, "get_status", AsyncMock(return_value=_status(block=55, lid=105)))
+
+    hw = await lab.get_run_status()
+    assert hw.running is True
+    assert hw.state == RunLifecycle.RUNNING
+    assert hw.progress == 75
+    assert hw.block_temperature == 55.0
+    assert hw.lid_temperature == 105.0
 
 
 # --- run_pcr termination logic ---
@@ -207,10 +306,10 @@ def _patch_run_pcr_dependencies(
     *,
     run_status_seq: list[RunStatus],
     monkeypatch: pytest.MonkeyPatch,
-) -> list[PCRRunState]:
-    """Wire up start_run/get_status/poll_run_status/sleep for run_pcr tests."""
+) -> list[RunState]:
+    """Wire up _start_pcr_program/get_status/poll_run_status/sleep for run_pcr tests."""
 
-    async def fake_start_run(**_kwargs):
+    async def fake_start_program(**_kwargs):
         return None
 
     async def fake_get_status():
@@ -227,7 +326,7 @@ def _patch_run_pcr_dependencies(
     async def fake_sleep(_seconds):
         return None
 
-    monkeypatch.setattr(lab, "start_run", fake_start_run)
+    monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
     monkeypatch.setattr(lab, "get_status", fake_get_status)
     monkeypatch.setattr(lab, "poll_run_status", fake_poll_run_status)
     monkeypatch.setattr("bentolab.ble_client.asyncio.sleep", fake_sleep)

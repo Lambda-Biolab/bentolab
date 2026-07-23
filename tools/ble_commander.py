@@ -500,7 +500,7 @@ class BentoCommander:
         }
 
         completer = WordCompleter(
-            list(commands.keys()) + ["help", "quit", "exit"],
+            [*commands.keys(), "help", "quit", "exit"],
             ignore_case=True,
         )
 

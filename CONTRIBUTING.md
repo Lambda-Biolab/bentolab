@@ -51,8 +51,13 @@ enforced by `make validate` are non-negotiable. When a gate fires:
   avoided.
 - **Do not introduce per-file excludes in `[tool.pyright]` or
   `[tool.ruff.lint.per-file-ignores]`** without PR-body justification. The
-  existing `tools/*` C901 exemption is the only standing carve-out, because
-  debug scripts legitimately dispatch on many branches.
+  standing carve-outs are:
+    - `tools/*` ignores `C901` and `S` -- debug scripts dispatch on many
+      branches and don't ship with the library.
+    - `tests/*` ignores `S101` -- `assert` is the pytest idiom.
+- **No commits without explicit approval.** Even one-line fixes. Use the
+  `committing-staged-with-message` skill, which pauses for review before
+  writing the commit.
 
 ## Dependencies
 
@@ -64,8 +69,9 @@ enforced by `make validate` are non-negotiable. When a gate fires:
 
 ## Code Style
 
-- **Formatter/Linter**: ruff (line length 100, target py311)
-- **Type checker**: pyright (basic mode)
+- **Formatter/Linter**: ruff (line length 100, target py311; rules `E F I UP B SIM C90 S RUF`)
+- **Type checker**: pyright (`standard` mode)
+- **Complexity**: complexipy, max 15 / function
 - **Docstrings**: Google style
 - **Imports**: sorted by ruff (`I` rule)
 
@@ -82,6 +88,10 @@ enforced by `make validate` are non-negotiable. When a gate fires:
 ## Development Setup
 
 ```bash
-make setup           # Create venv + install deps
-make validate        # Verify everything passes
+make setup           # Create venv + install dev + tools deps
+make setup_all       # Also install [api] extras (FastAPI, uvicorn)
+make validate        # Verify everything passes (incl. tests)
+make quick_validate  # Skip tests
+make test            # Test suite only (excludes hardware)
+make test-cov        # Test suite + coverage gate (>= 80%)
 ```

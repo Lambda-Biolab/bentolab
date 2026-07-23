@@ -247,7 +247,7 @@ async def enumerate_gatt(
                         char_data["read_error"] = "timeout"
                     except BleakError as exc:
                         char_data["read_error"] = str(exc)
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         char_data["read_error"] = f"unexpected: {exc}"
 
                 # Track notifiable characteristics
@@ -285,7 +285,7 @@ async def enumerate_gatt(
                                 "value_hex": _hex(desc_val),
                             }
                         )
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         char_data.setdefault("descriptors", []).append(
                             {
                                 "uuid": desc.uuid,

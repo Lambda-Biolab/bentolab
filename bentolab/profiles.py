@@ -7,10 +7,10 @@ on-disk filename is a slug derived from the name.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from ._data_dirs import profiles_dir
+from ._slugs import slug_for
 from ._store import atomic_write_text, load_with_backup
 from .models import PCRProfile
 
@@ -21,17 +21,6 @@ class ProfileNotFoundError(KeyError):
 
 class ProfileExistsError(FileExistsError):
     pass
-
-
-_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def slug_for(name: str) -> str:
-    """Filesystem-safe slug for a profile name."""
-    s = _SLUG_RE.sub("-", name).strip("-")
-    if not s:
-        raise ValueError("Profile name produced an empty slug")
-    return s
 
 
 def _path_for(name: str, *, root: Path | None = None) -> Path:
@@ -79,6 +68,17 @@ def delete(name: str, *, root: Path | None = None) -> None:
 
 def exists(name: str, *, root: Path | None = None) -> bool:
     return _path_for(name, root=root).exists()
+
+
+def path_for(name: str, *, root: Path | None = None) -> Path:
+    """Public accessor for the on-disk path of a profile YAML.
+
+    Returns the path whether or not the file exists — callers can
+    use :func:`exists` to check. Mirrors the shape of :func:`_path_for`
+    but is the public, documented entry point for callers (e.g. the
+    TUI) that need to hand the file path off to another tool.
+    """
+    return _path_for(name, root=root)
 
 
 TEMPLATE_YAML = """\

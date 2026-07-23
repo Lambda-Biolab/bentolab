@@ -3,8 +3,7 @@
 Stub. The Wi-Fi protocol has not been reverse-engineered yet; every
 method raises :class:`NotImplementedError`. The public surface is kept
 aligned with :class:`bentolab.ble_client.BentoLabBLE` so a future
-implementation can slot in behind the shared
-:class:`bentolab.thermocycler.BentoLab` wrapper without an API break.
+implementation can provide a parallel transport.
 """
 
 from __future__ import annotations
@@ -30,17 +29,18 @@ class BentoLabWiFi:
         raise NotImplementedError("Protocol not yet reverse-engineered")
 
     async def connect(self, host: str | None = None) -> None:
-        """Connect to the Bento Lab Wi-Fi unit."""
-        import aiohttp  # local import: keeps aiohttp optional for the core install
+        """Connect to the Bento Lab Wi-Fi unit.
 
+        Stub. The Wi-Fi protocol is not decoded yet, so this raises
+        :class:`NotImplementedError` like every other method on the
+        stub. Keeping aiohttp optional for the core install.
+        """
         self.host = host or self.host
-        if not self.host:
-            self.host = await self.discover()
-        self._session = aiohttp.ClientSession()
+        raise NotImplementedError("Protocol not yet reverse-engineered")
 
     async def disconnect(self) -> None:
-        """Close the HTTP session."""
-        if self._session:
+        """Close the HTTP session. No-op when never connected."""
+        if self._session is not None:
             await self._session.close()
             self._session = None
 
