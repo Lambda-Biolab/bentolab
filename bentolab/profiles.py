@@ -70,6 +70,17 @@ def exists(name: str, *, root: Path | None = None) -> bool:
     return _path_for(name, root=root).exists()
 
 
+def path_for(name: str, *, root: Path | None = None) -> Path:
+    """Public accessor for the on-disk path of a profile YAML.
+
+    Returns the path whether or not the file exists — callers can
+    use :func:`exists` to check. Mirrors the shape of :func:`_path_for`
+    but is the public, documented entry point for callers (e.g. the
+    TUI) that need to hand the file path off to another tool.
+    """
+    return _path_for(name, root=root)
+
+
 TEMPLATE_YAML = """\
 name: New profile
 lid_temperature: 110

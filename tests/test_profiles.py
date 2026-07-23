@@ -85,3 +85,24 @@ def test_slug_collapses_runs_of_bad_chars() -> None:
 def test_slug_rejects_empty() -> None:
     with pytest.raises(ValueError):
         profile_store.slug_for("///")
+
+
+def test_path_for_returns_yaml_in_root(tmp_path: Path) -> None:
+    """``path_for`` is the public TUI-facing accessor for the YAML file path."""
+    path = profile_store.path_for("alpha", root=tmp_path)
+    assert path == tmp_path / "alpha.yaml"
+
+
+def test_path_for_uses_slug_for_name_normalization(tmp_path: Path) -> None:
+    """Special chars in the name collapse to a stable slug for the file path."""
+    path = profile_store.path_for("My Cool Run!!!", root=tmp_path)
+    # exact slug depends on _slugs.slug_for; assert .yaml extension and slug-stability
+    assert path.suffix == ".yaml"
+    assert path.stem != "My Cool Run!!!"
+
+
+def test_path_for_does_not_require_file_existence(tmp_path: Path) -> None:
+    """``path_for`` returns the path even when no file has been saved."""
+    path = profile_store.path_for("not-yet-saved", root=tmp_path)
+    assert path.parent == tmp_path
+    assert not path.exists()
