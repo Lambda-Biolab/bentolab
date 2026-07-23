@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..models import PCRProfile
 from ..runs import RunLifecycle, RunManager, is_active, is_terminal
+from ._validation import validate_profile
 
 if TYPE_CHECKING:
     from .app import BleClientProtocol
@@ -199,9 +200,7 @@ class RunService:
             errors.append("Failed to query device status")
 
         # 4. Profile compatible
-        from .app import _validate_profile  # late import avoids cycle
-
-        ok, profile_errors, _warnings = _validate_profile(profile_dict)
+        ok, profile_errors, _warnings = validate_profile(profile_dict)
         if not ok:
             errors.extend(profile_errors)
 
