@@ -44,10 +44,7 @@ async def _run(
         async with lab:
             log.event("connected", {"address": getattr(lab, "_connected_address", None)})
             if no_tail:
-                stages, cycles = profile.to_stages_and_cycles()
-                await lab.start_run(
-                    name=profile.name, stages=stages, cycles=cycles, lid_temp=lid_temp
-                )
+                await lab.start_run(profile, lid_temp=lid_temp)
                 log.event("run_started", {"profile": profile.name, "tail": False})
                 stdout.print(f"[green]Started:[/green] {profile.name}")
                 return

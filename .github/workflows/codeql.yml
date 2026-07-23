@@ -18,9 +18,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v4
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+      - uses: github/codeql-action/init@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
         with:
           languages: python
-      - uses: github/codeql-action/autobuild@v4
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/autobuild@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
+      - uses: github/codeql-action/analyze@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7

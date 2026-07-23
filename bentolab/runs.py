@@ -1,32 +1,44 @@
-"""Run lifecycle management for the BentoLab HTTP API.
+"""Unified PCR run lifecycle and telemetry model.
 
-Implements the state machine, exclusive device locking, and result
-packaging specified in the C22 contract (Tier 2 — hardware execution).
+Owns the canonical state machine that both the BLE transport
+(:mod:`bentolab.ble_client`) and the HTTP API (:mod:`bentolab.api.app`)
+speak in. Replacing two parallel encodings -- :class:`ble_client.PCRRunState`
+(telemetry snapshot) and :class:`api.runs.RunStates` (lifecycle strings) --
+with a single model makes "what state is the run in?" answerable in one
+place and removes a class of silent-desync bugs.
 
-In-memory storage is used for v1; the interface is designed so a SQLite
-backend (see contract "Run state persistence") can be swapped in by
-replacing the dict with a database adapter that implements the same
-__getitem__ / __setitem__ contract.
+Components:
+
+- :class:`RunLifecycle` -- the discrete phase a run is in. Subclass of
+  ``str`` so existing string-based comparisons (``run["state"] == "completed"``)
+  still work.
+- :class:`RunState` -- a single point-in-time snapshot combining lifecycle
+  (one of :class:`RunLifecycle`) with live telemetry (progress, block /
+  lid temperatures, elapsed seconds).
+- :class:`RunManager` -- API-side store for in-flight runs, exclusive
+  device locking, and lifecycle transitions.
+- :data:`TERMINAL_STATES` / :data:`ACTIVE_STATES` -- membership helpers.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Run state constants  (C22 contract State model)
-# ---------------------------------------------------------------------------
+class RunLifecycle(StrEnum):
+    """Discrete lifecycle phases a PCR run can be in.
 
-
-class RunStates:
-    """Literal state values matching the contract state model."""
+    ``StrEnum`` keeps the string values stable for serialization, so
+    JSON responses and stored dicts continue to use the same wire
+    format (e.g. ``"completed"``).
+    """
 
     IDLE = "idle"
     ACCEPTED = "accepted"
@@ -36,15 +48,55 @@ class RunStates:
     ABORTED = "aborted"
     UNKNOWN_REVIEW = "unknown_requires_operator_review"
 
-    # States where the run is over and the device lock is released
-    TERMINAL = {COMPLETED, FAILED, ABORTED, UNKNOWN_REVIEW}
 
-    # States where the device lock is held and hardware may be active
-    ACTIVE = {ACCEPTED, RUNNING}
+# Run is over and the device lock is released.
+TERMINAL_STATES: frozenset[RunLifecycle] = frozenset(
+    {
+        RunLifecycle.COMPLETED,
+        RunLifecycle.FAILED,
+        RunLifecycle.ABORTED,
+        RunLifecycle.UNKNOWN_REVIEW,
+    }
+)
+
+# Run holds the device lock and hardware may be active.
+ACTIVE_STATES: frozenset[RunLifecycle] = frozenset({RunLifecycle.ACCEPTED, RunLifecycle.RUNNING})
+
+
+def is_terminal(state: RunLifecycle | str) -> bool:
+    """Return True if the run is in a terminal (final) phase."""
+    return RunLifecycle(state) in TERMINAL_STATES
+
+
+def is_active(state: RunLifecycle | str) -> bool:
+    """Return True if the run holds the device lock and may be active on hardware."""
+    return RunLifecycle(state) in ACTIVE_STATES
+
+
+@dataclass
+class RunState:
+    """A single point-in-time snapshot of a PCR run.
+
+    Combines the lifecycle phase (one of :class:`RunLifecycle`) with live
+    telemetry: progress (0-100), block / lid temperatures, elapsed time.
+    Yields are cheap -- construct one per status poll.
+    """
+
+    state: RunLifecycle = RunLifecycle.IDLE
+    progress: int = 0
+    block_temperature: float | None = None
+    lid_temperature: float | None = None
+    elapsed_seconds: float = 0.0
+
+    @property
+    def running(self) -> bool:
+        """Convenience flag: True iff the device reports an active run."""
+        return self.state == RunLifecycle.RUNNING
 
 
 # ---------------------------------------------------------------------------
-# RunManager
+# RunManager -- moved from api/runs.py so the lifecycle and its manager
+# live together. Behavior is unchanged.
 # ---------------------------------------------------------------------------
 
 
@@ -62,9 +114,9 @@ class RunManager:
 
         mgr = RunManager()
         run_id = mgr.create_run(profile={...}, operator="alice")
-        mgr.transition_to(run_id, RunStates.RUNNING)
+        mgr.transition_to(run_id, RunLifecycle.RUNNING)
         # ... on completion:
-        mgr.transition_to(run_id, RunStates.COMPLETED)
+        mgr.transition_to(run_id, RunLifecycle.COMPLETED)
         results = mgr.get_results(run_id)
     """
 
@@ -74,7 +126,6 @@ class RunManager:
 
         # Exclusive device lock - at most one run at a time
         self._device_lock_run_id: str | None = None
-        self._device_lock_time: float | None = None
 
     # ------------------------------------------------------------------
     # Device lock
@@ -104,7 +155,6 @@ class RunManager:
         if released:
             logger.warning("Lock force-released for run %s", released)
         self._device_lock_run_id = None
-        self._device_lock_time = None
         return released
 
     @property
@@ -145,7 +195,7 @@ class RunManager:
 
         self._runs[run_id] = {
             "run_id": run_id,
-            "state": RunStates.ACCEPTED,
+            "state": RunLifecycle.ACCEPTED,
             "profile": profile,
             "device_address": device_address or "",
             "operator": operator or "",
@@ -160,10 +210,10 @@ class RunManager:
         }
 
         self._acquire_lock(run_id)
-        logger.info("Run %s created  state=%s", run_id, RunStates.ACCEPTED)
+        logger.info("Run %s created  state=%s", run_id, RunLifecycle.ACCEPTED)
         return run_id
 
-    def transition_to(self, run_id: str, new_state: str) -> bool:
+    def transition_to(self, run_id: str, new_state: RunLifecycle | str) -> bool:
         """Transition a run to new_state.
 
         Returns True on success, False if the run does not exist
@@ -175,28 +225,29 @@ class RunManager:
             return False
 
         current = run["state"]
+        new = RunLifecycle(new_state)
 
         # Terminal states are final.
-        if current in RunStates.TERMINAL:
+        if is_terminal(current):
             logger.warning(
                 "Cannot transition run %s from terminal state %s to %s",
                 run_id,
                 current,
-                new_state,
+                new,
             )
             return False
 
         now = datetime.now(UTC).isoformat()
-        if new_state in RunStates.TERMINAL:
+        if is_terminal(new):
             run["completed_at"] = now
-            if new_state == RunStates.ABORTED:
+            if new == RunLifecycle.ABORTED:
                 run["aborted_at"] = now
 
-        run["state"] = new_state
-        logger.info("Run %s: %s -> %s", run_id, current, new_state)
+        run["state"] = new
+        logger.info("Run %s: %s -> %s", run_id, current, new)
 
         # Release the device lock on terminal states
-        if new_state in RunStates.TERMINAL:
+        if is_terminal(new):
             self._release_lock()
 
         return True
@@ -211,7 +262,7 @@ class RunManager:
 
     def list_active_runs(self) -> list[dict[str, Any]]:
         """Return all runs in an active (non-terminal) state."""
-        return [r for r in self._runs.values() if r["state"] in RunStates.ACTIVE]
+        return [r for r in self._runs.values() if is_active(r["state"])]
 
     # ------------------------------------------------------------------
     # Result package  (C22 contract Terminal result package)
@@ -274,9 +325,18 @@ class RunManager:
         if self._device_lock_run_id is not None:
             raise RuntimeError(f"Device already locked by run {self._device_lock_run_id}")
         self._device_lock_run_id = run_id
-        self._device_lock_time = time.monotonic()
 
     def _release_lock(self) -> None:
         """Release the device lock."""
         self._device_lock_run_id = None
-        self._device_lock_time = None
+
+
+__all__ = [
+    "ACTIVE_STATES",
+    "TERMINAL_STATES",
+    "RunLifecycle",
+    "RunManager",
+    "RunState",
+    "is_active",
+    "is_terminal",
+]

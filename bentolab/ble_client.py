@@ -52,6 +52,7 @@ from .protocol import (
     encode_profile_slot,
     encode_stage,
 )
+from .runs import RunLifecycle, RunState
 
 logger = logging.getLogger(__name__)
 
@@ -79,17 +80,6 @@ class ProfileData:
     lid_temperature: float = 0.0
 
 
-@dataclass
-class PCRRunState:
-    """Snapshot of a running PCR program's state."""
-
-    running: bool = False
-    progress: int = 0
-    block_temperature: float = 0.0
-    lid_temperature: float = 0.0
-    elapsed_seconds: float = 0.0
-
-
 class BentoLabBLE:
     """Async BLE client for controlling a Bento Lab Pro.
 
@@ -101,11 +91,9 @@ class BentoLabBLE:
         self,
         address: str | None = None,
         name_filter: str = r"(?i)bento",
-        auto_reconnect: bool = True,
     ):
         self.address = address
         self.name_filter = re.compile(name_filter)
-        self.auto_reconnect = auto_reconnect
         self._client: BleakClient | None = None
         self._rx_buffer: list[dict] = []
         self._rx_event = asyncio.Event()
@@ -157,9 +145,6 @@ class BentoLabBLE:
         if not self._client or not self._client.is_connected:
             raise BentoLabConnectionError("Not connected to Bento Lab")
         return self._client
-
-    def _check_connected(self) -> None:
-        self._require_client()
 
     async def _send(self, cmd: str) -> None:
         """Send a command to the device via NUS RX."""
@@ -368,16 +353,40 @@ class BentoLabBLE:
 
     async def start_run(
         self,
+        profile: PCRProfile,
+        lid_temp: float | None = None,
+    ) -> None:
+        """Start a PCR run from a high-level :class:`PCRProfile`.
+
+        This is the public API used by the HTTP service layer. Flattens
+        the profile into stages/cycles and delegates to the low-level
+        :meth:`_start_pcr_program`. The protocol side-effect is to send
+        ``pa`` and wait for a ``run_status`` response.
+
+        Args:
+            profile: A validated PCR profile.
+            lid_temp: Optional lid temperature override; defaults to
+                ``profile.lid_temperature``.
+        """
+        stages, cycles = profile.to_stages_and_cycles()
+        effective_lid = lid_temp if lid_temp is not None else profile.lid_temperature
+        await self._start_pcr_program(
+            name=profile.name,
+            stages=stages,
+            cycles=cycles,
+            lid_temp=effective_lid,
+            slot=0,
+        )
+
+    async def _start_pcr_program(
+        self,
         name: str = "Python Run",
         stages: list[tuple[float, int]] | None = None,
         cycles: list[tuple[int, int, int]] | None = None,
         lid_temp: float = 110.0,
         slot: int = 0,
     ) -> None:
-        """Start a PCR run.
-
-        Sends the profile inline with the start command, matching the
-        device's protocol.
+        """Low-level: start a PCR run with explicit stages/cycles.
 
         Args:
             name: Profile name.
@@ -411,6 +420,29 @@ class BentoLabBLE:
                 return r["data"]
         raise BentoLabCommandError("No run status response")
 
+    async def get_run_status(self) -> dict[str, Any]:
+        """Return a snapshot of the current run suitable for the API.
+
+        Combines :meth:`poll_run_status` (progress + running flag) with
+        :meth:`get_status` (block + lid temperatures) into the dict
+        shape the HTTP API service expects. ``elapsed_seconds`` is
+        reported as 0.0 since the device doesn't surface an elapsed-time
+        field; the API layer tracks that on its own.
+        """
+        rs = await self.poll_run_status()
+        sb = await self.get_status()
+        return {
+            "running": bool(rs.running),
+            "progress": int(rs.progress),
+            "block_temperature": float(sb.block_temperature),
+            "lid_temperature": float(sb.lid_temperature),
+            "elapsed_seconds": 0.0,
+        }
+
+    async def abort_run(self) -> None:
+        """Abort the current run. Adapter alias for :meth:`stop_run`."""
+        await self.stop_run()
+
     async def stop_run(self) -> None:
         """Stop the currently running PCR program."""
         await self._send("pg")
@@ -422,7 +454,7 @@ class BentoLabBLE:
         profile: PCRProfile,
         lid_temp: float = 110.0,
         poll_interval: float = 5.0,
-    ) -> AsyncIterator[PCRRunState]:
+    ) -> AsyncIterator[RunState]:
         """Run a :class:`PCRProfile` and yield live status updates.
 
         Convenience wrapper around :meth:`run_pcr` that accepts a
@@ -454,12 +486,12 @@ class BentoLabBLE:
         poll_interval: float = 5.0,
         startup_grace_seconds: float = 120.0,
         completion_confirmations: int = 3,
-    ) -> AsyncIterator[PCRRunState]:
+    ) -> AsyncIterator[RunState]:
         """Run a PCR program and yield status updates until completion.
 
         This is the high-level API for running PCR with progress tracking.
-        Yields PCRRunState objects at each poll interval until the run
-        completes or is stopped.
+        Yields :class:`~bentolab.runs.RunState` objects at each poll interval
+        until the run completes or is stopped.
 
         Termination requires *either* progress >= 99% OR
         ``completion_confirmations`` consecutive ``running=False`` polls
@@ -486,7 +518,7 @@ class BentoLabBLE:
             completion_confirmations: Number of consecutive ``running=False``
                 polls (after the grace period) required to declare done.
         """
-        await self.start_run(name=name, stages=stages, cycles=cycles, lid_temp=lid_temp)
+        await self._start_pcr_program(name=name, stages=stages, cycles=cycles, lid_temp=lid_temp)
 
         elapsed = 0.0
         consecutive_not_running = 0
@@ -506,8 +538,8 @@ class BentoLabBLE:
 
             peak_progress = max(peak_progress, progress)
 
-            state = PCRRunState(
-                running=running,
+            state = RunState(
+                state=RunLifecycle.RUNNING if running else RunLifecycle.IDLE,
                 progress=progress,
                 block_temperature=float(status.block_temperature),
                 lid_temperature=float(status.lid_temperature),

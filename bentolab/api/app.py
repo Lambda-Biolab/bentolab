@@ -17,7 +17,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from bentolab import __version__
 from bentolab.models import PCRProfile
 from bentolab.protocol import StatusBroadcast
+from bentolab.runs import RunManager
 
+from ._run_service import (
+    ApprovalRequiredError,
+    CannotAbortError,
+    PreflightFailedError,
+    RunNotFoundError,
+    RunService,
+    RunStartFailedError,
+)
 from .models import (
     DeviceInfo,
     DevicesResponse,
@@ -38,9 +47,9 @@ from .models import (
     RunStatusDetailResponse,
     StatusError,
     StatusResponse,
+    TemperatureLogEntry,
     TemperatureSnapshot,
 )
-from .runs import RunManager, RunStates
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +173,7 @@ def _validate_profile(profile_dict: dict[str, Any]) -> tuple[bool, list[str], li
 
 def _validate_step(
     errors: list[str],
-    warnings: list[str],  # noqa: ARG001
+    warnings: list[str],
     label: str,
     step: Any,
 ) -> None:
@@ -207,7 +216,7 @@ def _status_to_state_name(status: StatusBroadcast) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Helpers to extract BLE client / RunManager from the request
+# Helpers to extract BLE client / RunService from the request
 # ---------------------------------------------------------------------------
 
 
@@ -216,63 +225,18 @@ def _get_ble(request: Request) -> BleClientProtocol | None:
     return getattr(request.app.state, "ble_client", None)
 
 
-def _get_run_manager(request: Request) -> RunManager:
-    """Retrieve the RunManager from app state."""
-    return getattr(request.app.state, "run_manager", RunManager())
+def _get_run_service(request: Request) -> RunService:
+    """Retrieve the RunService from app state, building one if absent.
 
-
-# ---------------------------------------------------------------------------
-# Preflight  (C22 contract Preflight, lock, abort, and recovery)
-# ---------------------------------------------------------------------------
-
-
-async def _preflight(
-    ble: BleClientProtocol | None,
-    profile_dict: dict[str, Any],
-    device_address: str | None,
-    run_mgr: RunManager,
-) -> list[str]:
-    """Run hardware preflight checks.  Returns a list of error messages (empty = pass).
-
-    Checks (per contract):
-      1. BLE availability
-      2. Device reachability / connected
-      3. Device idle (not already running)
-      4. Profile compatible
-      5. Device lock available
+    Tests inject a RunManager via app.state; if none is present we
+    build a fresh manager. Production always injects one.
     """
-    errors: list[str] = []
-
-    # 1. BLE availability
-    if ble is None:
-        errors.append("BLE adapter not available")
-        return errors  # No point checking further without BLE
-
-    # 2. Device connected
-    if not ble.is_connected:
-        errors.append("Device not connected")
-
-    # 3. Device idle
-    try:
-        status = await ble.get_status()
-        if status.running:
-            errors.append("Device is already running a job")
-    except Exception:
-        errors.append("Failed to query device status")
-
-    # 4. Profile compatible
-    ok, profile_errors, _warnings = _validate_profile(profile_dict)
-    if not ok:
-        errors.extend(profile_errors)
-
-    # 5. Device lock available
-    lock_ok, held_by = run_mgr.check_lock_available()
-    if not lock_ok:
-        errors.append(
-            f"Device is busy with run {held_by} -- wait for it to finish or force-release"
-        )
-
-    return errors
+    cached = getattr(request.app.state, "run_service", None)
+    if cached is not None:
+        return cached
+    ble = _get_ble(request)
+    run_manager: RunManager = getattr(request.app.state, "run_manager", RunManager())
+    return RunService(ble, run_manager)
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +254,7 @@ async def _health(request: Request) -> HealthResponse:
         try:
             _ = ble.is_connected
             ble_status = "ok"
-        except Exception:  # noqa: BLE001
+        except Exception:
             ble_status = "error"
 
     return HealthResponse(
@@ -439,233 +403,170 @@ async def _dry_run(body: DryRunRequest) -> DryRunResponse:
 
 async def _start_run(body: RunRequest, request: Request) -> RunAcceptedResponse:
     """POST /runs -- start a real run (requires preflight + lock + approval)."""
-    ble = _get_ble(request)
-    run_mgr = _get_run_manager(request)
-
-    # --- Preflight ---
-    pf_errors = await _preflight(ble, body.profile, body.device_address, run_mgr)
-    if pf_errors:
+    service = _get_run_service(request)
+    try:
+        started = await service.start_run(
+            profile_dict=body.profile,
+            device_address=body.device_address,
+            operator=body.operator,
+            approval_id=body.approval_id,
+        )
+    except PreflightFailedError as exc:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "preflight_failed",
                 "severity": "error",
                 "human_message": "Preflight checks failed",
-                "operator_hint": "; ".join(pf_errors),
+                "operator_hint": "; ".join(exc.errors),
                 "retryable": True,
-                "details": {"errors": pf_errors},
+                "details": {"errors": exc.errors},
             },
-        )
-
-    # --- Approval check ---
-    if not body.approval_id:
+        ) from exc
+    except ApprovalRequiredError as exc:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "approval_required",
                 "severity": "error",
-                "human_message": "Approval ID is required to start a run",
+                "human_message": str(exc),
                 "operator_hint": "Supply a gateway approval_id in the request body",
                 "retryable": True,
                 "details": {},
             },
-        )
-
-    # --- Create run record (acquires lock) ---
-    run_id = run_mgr.create_run(
-        profile=body.profile,
-        device_address=body.device_address,
-        operator=body.operator,
-        approval_id=body.approval_id,
-    )
-
-    # --- Start on hardware ---
-    try:
-        profile = PCRProfile.from_dict(body.profile)
-        await ble.start_run(profile)
-        run_mgr.transition_to(run_id, RunStates.RUNNING)
-    except Exception as exc:
-        logger.exception("Failed to start run %s on hardware", run_id)
-        run_mgr.record_error(run_id, "run_start_failed", str(exc))
-        run_mgr.transition_to(run_id, RunStates.FAILED)
+        ) from exc
+    except RunStartFailedError as exc:
         raise HTTPException(
             status_code=500,
             detail={
                 "code": "run_start_failed",
                 "severity": "error",
-                "human_message": f"Failed to start run on hardware: {exc}",
+                "human_message": str(exc),
                 "operator_hint": "Check BLE connection and device state, then retry",
                 "retryable": True,
-                "details": {"run_id": run_id},
+                "details": {"run_id": exc.run_id},
             },
         ) from exc
 
-    run = run_mgr.get_run(run_id)
     return RunAcceptedResponse(
         ok=True,
-        run_id=run_id,
-        state=RunStates.RUNNING,
-        started_at=run["started_at"],
+        run_id=started.run_id,
+        state=started.state,
+        started_at=started.started_at,
     )
 
 
 async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDetailResponse:
     """GET /runs/{id} -- get run state and progress."""
-    run_mgr = _get_run_manager(request)
-    run = run_mgr.get_run(run_id)
-    if run is None:
+    service = _get_run_service(request)
+    try:
+        detail = await service.get_run_status(run_id)
+    except RunNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "run_not_found",
                 "severity": "error",
-                "human_message": f"Run {run_id} not found",
+                "human_message": str(exc),
                 "operator_hint": "Check the run ID",
                 "retryable": False,
                 "details": {"run_id": run_id},
             },
+        ) from exc
+
+    progress = (
+        RunProgressInfo(
+            progress=detail.progress.progress,
+            elapsed_seconds=detail.progress.elapsed_seconds,
         )
-
-    state = run["state"]
-    progress: RunProgressInfo | None = None
-    temperature: TemperatureSnapshot | None = None
-
-    # Poll hardware if run is active
-    if state in RunStates.ACTIVE:
-        ble = _get_ble(request)
-        if ble is not None and ble.is_connected:
-            try:
-                hw = await ble.get_run_status()
-                run_mgr.record_temperature(
-                    run_id, hw.get("block_temperature"), hw.get("lid_temperature")
-                )  # noqa: E501
-                progress = RunProgressInfo(
-                    progress=hw.get("progress", 0),
-                    elapsed_seconds=hw.get("elapsed_seconds", 0.0),
-                )
-            except Exception:
-                logger.debug("Could not poll hardware for run %s", run_id)
-
-    # Build temperature from latest log entry
-    if run["temperature_log"]:
-        last = run["temperature_log"][-1]
-        temperature = TemperatureSnapshot(
-            current=last.get("block"),
-            lid=last.get("lid"),
-            block=last.get("block"),
+        if detail.progress is not None
+        else None
+    )
+    temperature = (
+        TemperatureSnapshot(
+            current=detail.temperature.block,
+            lid=detail.temperature.lid,
+            block=detail.temperature.block,
         )
-
+        if detail.temperature is not None
+        else None
+    )
     return RunStatusDetailResponse(
-        run_id=run_id,
-        state=state,
+        run_id=detail.run_id,
+        state=detail.state,
         progress=progress,
         temperature=temperature,
-        errors=[StatusError(**e) for e in run["error_log"]],
+        errors=[StatusError(**e) for e in detail.errors],
     )
 
 
 async def _abort_run(run_id: str, request: Request) -> RunAbortResponse:
     """POST /runs/{id}/abort -- abort a running job."""
-    run_mgr = _get_run_manager(request)
-    run = run_mgr.get_run(run_id)
-    if run is None:
+    service = _get_run_service(request)
+    try:
+        aborted = await service.abort_run(run_id)
+    except RunNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "run_not_found",
                 "severity": "error",
-                "human_message": f"Run {run_id} not found",
+                "human_message": str(exc),
                 "operator_hint": "Check the run ID",
                 "retryable": False,
                 "details": {"run_id": run_id},
             },
-        )
-
-    state = run["state"]
-
-    # Idempotent: already terminal -> return current state
-    if state in RunStates.TERMINAL:
-        return RunAbortResponse(
-            ok=True,
-            state=state,
-            aborted_at=run.get("aborted_at"),
-        )
-
-    # If not running/accepted, reject
-    if state not in RunStates.ACTIVE:
+        ) from exc
+    except CannotAbortError as exc:
         raise HTTPException(
             status_code=409,
             detail={
                 "code": "cannot_abort",
                 "severity": "error",
-                "human_message": f"Cannot abort run in state {state}",
+                "human_message": str(exc),
                 "operator_hint": "Only active runs can be aborted",
                 "retryable": False,
-                "details": {"run_id": run_id, "state": state},
+                "details": {"run_id": run_id, "state": exc.state},
             },
-        )
+        ) from exc
 
-    # Try BLE abort
-    ble = _get_ble(request)
-    ble_ok = False
-    if ble is not None and ble.is_connected:
-        try:
-            await ble.abort_run()
-            ble_ok = True
-        except Exception:
-            logger.exception("BLE abort failed for run %s", run_id)
-
-    if ble_ok:
-        run_mgr.transition_to(run_id, RunStates.ABORTED)
-        logger.info("Run %s aborted by operator", run_id)
-    else:
-        # BLE unreachable after disconnect => mark for operator review
-        run_mgr.record_error(
-            run_id, "abort_ble_failed", "BLE abort failed -- device may be disconnected"
-        )  # noqa: E501
-        run_mgr.transition_to(run_id, RunStates.UNKNOWN_REVIEW)
-        logger.warning(
-            "Run %s -> unknown_requires_operator_review (BLE unreachable during abort)",
-            run_id,
-        )
-
-    updated = run_mgr.get_run(run_id)
     return RunAbortResponse(
         ok=True,
-        state=updated["state"],
-        aborted_at=updated.get("aborted_at"),
+        state=aborted.state,
+        aborted_at=aborted.aborted_at,
     )
 
 
 async def _get_results(run_id: str, request: Request) -> RunResultResponse:
     """GET /runs/{id}/results -- get terminal run results."""
-    run_mgr = _get_run_manager(request)
-    results = run_mgr.get_results(run_id)
-    if results is None:
+    service = _get_run_service(request)
+    try:
+        results = service.get_results(run_id)
+    except RunNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail={
                 "code": "run_not_found",
                 "severity": "error",
-                "human_message": f"Run {run_id} not found",
+                "human_message": str(exc),
                 "operator_hint": "Check the run ID",
                 "retryable": False,
                 "details": {"run_id": run_id},
             },
-        )
+        ) from exc
 
     return RunResultResponse(
-        run_id=results["run_id"],
-        state=results["state"],
-        profile=results["profile"],
-        temperature_log=results["temperature_log"],
-        started_at=results["started_at"],
-        completed_at=results["completed_at"],
-        aborted_at=results.get("aborted_at"),
-        operator=results["operator"],
-        approval_id=results["approval_id"],
-        errors=[StatusError(**e) for e in results["errors"]],
-        artifacts=results["artifacts"],
+        run_id=results.run_id,
+        state=results.state,
+        profile=results.profile,
+        temperature_log=[TemperatureLogEntry(**entry) for entry in results.temperature_log],
+        started_at=results.started_at,
+        completed_at=results.completed_at,
+        aborted_at=results.aborted_at,
+        operator=results.operator,
+        approval_id=results.approval_id,
+        errors=[StatusError(**e) for e in results.errors],
+        artifacts=results.artifacts,
     )
 
 

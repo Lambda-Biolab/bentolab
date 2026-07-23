@@ -1,4 +1,4 @@
-.PHONY: help setup validate lint_fix quick_validate check_complexity check_links check_docs test scan-ble scan-wifi commander monitor-ble clean
+.PHONY: help setup setup_all validate lint_fix quick_validate check_complexity check_links check_docs test test-cov scan-ble scan-wifi commander monitor-ble clean
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
@@ -10,18 +10,23 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Create venv and install all dependencies
+setup: ## Create venv and install dev + tools dependencies
 	uv venv --python 3.13
 	uv pip install -e ".[dev,tools]"
 	@echo "Activate with: source .venv/bin/activate"
 
+setup_all: ## Install ALL optional dependency groups (dev, tools, api)
+	uv venv --python 3.13
+	uv pip install -e ".[dev,tools,api]"
+	@echo "Activate with: source .venv/bin/activate"
+
 # ---- Validation targets ----
 
-validate: ## Full read-only validation (format, lint, types, complexity, tests)
+validate: ## Full read-only validation (format, lint, types, complexity, tests, coverage)
 	$(VENV)/ruff format --check $(SRC)
 	$(VENV)/ruff check $(SRC)
 	$(VENV)/pyright bentolab/
-	$(VENV)/complexipy bentolab/
+	$(VENV)/complexipy bentolab/ --max-complexity-allowed 15
 	$(VENV)/pytest tests/ -v -m "not hardware"
 
 lint_fix: ## Auto-fix lint and format issues
@@ -34,7 +39,7 @@ quick_validate: ## Quick check: ruff + pyright (skip tests)
 	$(VENV)/pyright bentolab/
 
 check_complexity: ## Run complexipy analysis
-	$(VENV)/complexipy bentolab/
+	$(VENV)/complexipy bentolab/ --max-complexity-allowed 15
 
 check_links: ## Check links with lychee
 	lychee --config .lychee.toml .
@@ -44,6 +49,9 @@ check_docs: ## Lint markdown files
 
 test: ## Run test suite (excludes hardware tests)
 	$(VENV)/pytest tests/ -v -m "not hardware"
+
+test-cov: ## Run test suite with coverage gate
+	$(VENV)/pytest tests/ -v -m "not hardware" --cov=bentolab --cov-report=term-missing --cov-fail-under=80
 
 # ---- Tool runners ----
 
