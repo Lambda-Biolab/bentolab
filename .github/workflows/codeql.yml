@@ -1,10 +1,21 @@
+---
+# https://github.blog/changelog/2025-10-28-upcoming-deprecation-of-codeql-action-v3/
+# Modern CodeQL config:
+# - No `pull_request:` trigger: under PR runs, codeql-action uploads SARIFs
+#   against a synthetic merge-ref SHA that races merge-protection ("Code
+#   scanning is still expecting 1 result from CodeQL for <merge>").
+#   `push:` (no branch filter) uploads against the real commit SHA, race
+#   eliminated.
+# - No `branches:` filter on `push:` (the modern best practice; works for
+#   all branch refs including merge queue pushes).
+# - SHA-pinned `uses:` on every step.
+# - `advanced-security/dismiss-alerts` step consumes inline
+#   `# codeql[query-id]=reason` suppression comments to dismiss findings
+#   on PR.
 name: "CodeQL"
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   schedule:
     - cron: "27 11 * * 0"
   workflow_dispatch:
@@ -17,10 +28,29 @@ jobs:
       actions: read
       contents: read
       security-events: write
+
     steps:
-      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
-      - uses: github/codeql-action/init@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
+      - name: Checkout repository
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
         with:
           languages: python
-      - uses: github/codeql-action/autobuild@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
-      - uses: github/codeql-action/analyze@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
+
+      - name: Perform CodeQL Analysis
+        id: analyze
+        uses: github/codeql-action/analyze@4d7c95ad6bec2e9a536fd2c8c62165890dcaf8a6 # v4.30.7
+        with:
+          output: sarif-results
+
+      - name: Dismiss alerts with inline suppression comments
+        uses: advanced-security/dismiss-alerts@046d6b48d2e43cf563f96f67332c47c432eff83e # v2.0.2
+        with:
+          sarif-id: ${{ steps.analyze.outputs.sarif-id }}
+          sarif-file: sarif-results
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
