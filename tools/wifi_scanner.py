@@ -81,51 +81,53 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(total=3)
 def _detect_subnet_macOS() -> str | None:
     """Detect the local subnet on macOS by inspecting the default route interface."""
     try:
-        # Find the default interface via route
-        result = subprocess.run(
-            ["route", "-n", "get", "default"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        iface = None
-        for line in result.stdout.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("interface:"):
-                iface = stripped.split(":", 1)[1].strip()
-                break
+        iface = _get_default_interface()
         if not iface:
             return None
-
-        # Parse ifconfig for that interface
-        result = subprocess.run(
-            ["ifconfig", iface],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        ip_addr = None
-        netmask_hex = None
-        for line in result.stdout.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("inet ") and "broadcast" in stripped:
-                parts = stripped.split()
-                ip_addr = parts[1]
-                mask_idx = parts.index("netmask") + 1 if "netmask" in parts else None
-                if mask_idx and mask_idx < len(parts):
-                    netmask_hex = parts[mask_idx]
-                break
-
+        ip_addr, netmask_hex = _parse_ifconfig_inet(iface)
         if not ip_addr or not netmask_hex:
             return None
-
-        # Convert hex netmask (0xffffff00) to prefix length
-        mask_int = int(netmask_hex, 16)
-        prefix_len = bin(mask_int).count("1")
-        network = ipaddress.IPv4Network(f"{ip_addr}/{prefix_len}", strict=False)
-        return str(network)
+        prefix_len = bin(int(netmask_hex, 16)).count("1")
+        return str(ipaddress.IPv4Network(f"{ip_addr}/{prefix_len}", strict=False))
     except Exception:
         return None
+
+
+def _get_default_interface() -> str | None:
+    """Return the default-route interface name on macOS, or None on failure."""
+    result = subprocess.run(
+        ["route", "-n", "get", "default"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("interface:"):
+            return stripped.split(":", 1)[1].strip()
+    return None
+
+
+def _parse_ifconfig_inet(iface: str) -> tuple[str | None, str | None]:
+    """Read ifconfig output for ``iface``; return (ip, netmask_hex) or (None, None)."""
+    result = subprocess.run(
+        ["ifconfig", iface],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("inet ") and "broadcast" in stripped:
+            parts = stripped.split()
+            ip_addr = parts[1]
+            netmask_hex = None
+            if "netmask" in parts:
+                mask_idx = parts.index("netmask") + 1
+                if mask_idx < len(parts):
+                    netmask_hex = parts[mask_idx]
+            return ip_addr, netmask_hex
+    return None, None
 
 
 def _detect_subnet_socket() -> str | None:
@@ -235,67 +237,91 @@ def scan_arp_table() -> list[dict[str, Any]]:
         console.print("  [yellow]arp command not found.[/yellow]")
         return []
 
-    entries: list[dict[str, Any]] = []
-    for line in result.stdout.splitlines():
-        # macOS format: host (ip) at mac on iface [ifscope ...]
-        # Linux format: host (ip) at mac [ether] on iface
-        parts = line.strip().split()
-        if len(parts) < 4:
+    entries = [_parse_arp_line(line) for line in result.stdout.splitlines()]
+    entries = [e for e in entries if e is not None]
+    _print_arp_matches(entries)
+    _print_arp_summary(entries)
+    return entries
+
+
+def _parse_arp_line(line: str) -> dict[str, Any] | None:
+    """Parse one `arp -a` line. Return {ip, mac, oui_match} or None on skip."""
+    parts = line.strip().split()
+    if len(parts) < 4:
+        return None
+
+    ip_str = _extract_ip_token(parts)
+    if ip_str is None:
+        return None
+
+    mac_str = _extract_mac_token(parts)
+    if not mac_str or mac_str == "(incomplete)":
+        mac_str = "unknown"
+
+    mac_normalised = _normalise_mac(mac_str)
+    oui_prefix = mac_normalised[:8] if mac_normalised != "unknown" else ""
+    return {
+        "ip": ip_str,
+        "mac": mac_normalised,
+        "oui_match": INTERESTING_OUIS.get(oui_prefix, ""),
+    }
+
+
+def _extract_ip_token(parts: list[str]) -> str | None:
+    """Return the IP address (in parens) from a split arp -a line."""
+    for p in parts:
+        if p.startswith("(") and p.endswith(")"):
+            return p.strip("()")
+    return None
+
+
+def _extract_mac_token(parts: list[str]) -> str | None:
+    """Return the MAC address from a split arp -a line, or None if missing.
+
+    Requires at least 2 colons and the token to look like hex.
+    """
+    for i, p in enumerate(parts):
+        if i < 2 or ":" not in p or len(p) < 11:
             continue
-        # Extract IP — it sits inside parentheses
-        ip_str = None
-        mac_str = None
-        for i, p in enumerate(parts):
-            if p.startswith("(") and p.endswith(")"):
-                ip_str = p.strip("()")
-            if ":" in p and len(p) >= 11 and i >= 2:
-                # Likely a MAC address (at least xx:xx:xx)
-                candidate = p.lower().strip()
-                if all(c in "0123456789abcdef:" for c in candidate) and candidate.count(":") >= 2:
-                    mac_str = candidate
-
-        if not ip_str:
+        candidate = p.lower().strip()
+        if candidate.count(":") < 2:
             continue
-        if not mac_str or mac_str == "(incomplete)":
-            mac_str = "unknown"
+        if not all(c in "0123456789abcdef:" for c in candidate):
+            continue
+        return candidate
+    return None
 
-        # Normalise MAC segments to two-digit hex for OUI matching
-        if mac_str != "unknown":
-            segments = mac_str.split(":")
-            mac_normalised = ":".join(s.zfill(2) for s in segments).lower()
-        else:
-            mac_normalised = "unknown"
 
-        oui_prefix = mac_normalised[:8] if mac_normalised != "unknown" else ""
-        oui_match = INTERESTING_OUIS.get(oui_prefix, "")
+def _normalise_mac(mac: str) -> str:
+    """Zero-pad each segment to two hex digits; lowercase. Pass 'unknown' through."""
+    if mac == "unknown":
+        return "unknown"
+    return ":".join(s.zfill(2) for s in mac.split(":")).lower()
 
-        entry: dict[str, Any] = {
-            "ip": ip_str,
-            "mac": mac_normalised,
-            "oui_match": oui_match,
-        }
-        entries.append(entry)
 
-        if oui_match:
+def _print_arp_matches(entries: list[dict[str, Any]]) -> None:
+    """Print the per-line bold-red match indicators (one per OUI hit)."""
+    for e in entries:
+        if e["oui_match"]:
             console.print(
-                f"  [bold red]** MATCH **[/bold red] {ip_str}  {mac_normalised}  "
-                f"[yellow]{oui_match}[/yellow]"
+                f"  [bold red]** MATCH **[/bold red] {e['ip']}  {e['mac']}  "
+                f"[yellow]{e['oui_match']}[/yellow]"
             )
 
-    # Print summary table
-    if entries:
-        table = Table(title="ARP Entries", show_lines=False)
-        table.add_column("IP", style="white")
-        table.add_column("MAC", style="dim")
-        table.add_column("OUI Match", style="yellow")
-        for e in entries:
-            style = "bold red" if e["oui_match"] else ""
-            table.add_row(e["ip"], e["mac"], e["oui_match"] or "-", style=style)
-        console.print(table)
-    else:
-        console.print("  [dim]No ARP entries found.[/dim]")
 
-    return entries
+def _print_arp_summary(entries: list[dict[str, Any]]) -> None:
+    """Print the ARP entries summary table; 'no entries' fallback otherwise."""
+    if not entries:
+        console.print("  [dim]No ARP entries found.[/dim]")
+        return
+    table = Table(title="ARP Entries", show_lines=False)
+    table.add_column("IP", style="white")
+    table.add_column("MAC", style="dim")
+    table.add_column("OUI Match", style="yellow")
+    for e in entries:
+        style = "bold red" if e["oui_match"] else ""
+        table.add_row(e["ip"], e["mac"], e["oui_match"] or "-", style=style)
+    console.print(table)
 
 
 # ===== nmap Port Scan =====
@@ -310,64 +336,91 @@ def run_nmap_scan(target: str) -> list[dict[str, Any]]:
         console.print("  [yellow]nmap not found in PATH. Skipping port scan.[/yellow]")
         return []
 
-    # Try service-version scan; if it needs root, fall back to -sT
+    result = _run_nmap_with_fallback(nmap_path, target)
+    if result is None:
+        return []
+
+    ports = _parse_nmap_output(result.stdout)
+    _print_nmap_results(ports, target)
+    return ports
+
+
+def _run_nmap_with_fallback(nmap_path: str, target: str):
+    """Run nmap -sV; if it requires root, retry with -sT. Return CompletedProcess or None.
+
+    Returns None when both attempts time out.
+    """
     cmd = [nmap_path, "-sV", "-p", "1-10000", target]
     console.print(f"  Running: {' '.join(cmd)}")
-
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     except subprocess.TimeoutExpired:
         console.print("  [yellow]nmap timed out (300s limit).[/yellow]")
-        return []
+        return None
 
-    # If nmap complains about privileges, retry with -sT (TCP connect)
-    if result.returncode != 0 and (
-        "requires root" in result.stderr.lower()
-        or "operation not permitted" in result.stderr.lower()
-        or "you requested a scan type" in result.stderr.lower()
-    ):
-        console.print("  [yellow]Falling back to TCP connect scan (-sT)...[/yellow]")
-        cmd = [nmap_path, "-sT", "-sV", "-p", "1-10000", target]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        except subprocess.TimeoutExpired:
-            console.print("  [yellow]nmap fallback timed out.[/yellow]")
-            return []
+    if not _nmap_needs_fallback(result.stderr):
+        return result
 
-    # Parse open ports from output
+    console.print("  [yellow]Falling back to TCP connect scan (-sT)...[/yellow]")
+    cmd = [nmap_path, "-sT", "-sV", "-p", "1-10000", target]
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        console.print("  [yellow]nmap fallback timed out.[/yellow]")
+        return None
+
+
+def _nmap_needs_fallback(stderr: str) -> bool:
+    """True if nmap's stderr indicates the scan type requires root and we should retry."""
+    if not stderr:
+        return False
+    lower = stderr.lower()
+    return (
+        "requires root" in lower
+        or "operation not permitted" in lower
+        or "you requested a scan type" in lower
+    )
+
+
+def _parse_nmap_output(stdout: str) -> list[dict[str, Any]]:
+    """Parse nmap stdout into a list of {port, protocol, service, version} dicts."""
     ports: list[dict[str, Any]] = []
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         line = line.strip()
-        # Lines like: 80/tcp   open  http    Apache httpd 2.4.41
-        if "/tcp" in line or "/udp" in line:
-            parts = line.split(None, 3)
-            if len(parts) >= 3 and parts[1] == "open":
-                port_proto = parts[0]  # e.g. "80/tcp"
-                service = parts[2] if len(parts) > 2 else ""
-                version = parts[3] if len(parts) > 3 else ""
-                port_num = int(port_proto.split("/")[0])
-                protocol = port_proto.split("/")[1]
-                entry = {
-                    "port": port_num,
-                    "protocol": protocol,
-                    "service": service,
-                    "version": version.strip(),
-                }
-                ports.append(entry)
-
-    if ports:
-        table = Table(title=f"Open Ports on {target}", show_lines=False)
-        table.add_column("Port", style="green")
-        table.add_column("Protocol")
-        table.add_column("Service", style="cyan")
-        table.add_column("Version", style="dim")
-        for p in ports:
-            table.add_row(str(p["port"]), p["protocol"], p["service"], p["version"])
-        console.print(table)
-    else:
-        console.print("  [dim]No open ports found (or scan failed).[/dim]")
-
+        if "/tcp" not in line and "/udp" not in line:
+            continue
+        parts = line.split(None, 3)
+        if len(parts) < 3 or parts[1] != "open":
+            continue
+        port_proto = parts[0]
+        service = parts[2] if len(parts) > 2 else ""
+        version = parts[3] if len(parts) > 3 else ""
+        port_num = int(port_proto.split("/")[0])
+        protocol = port_proto.split("/")[1]
+        ports.append(
+            {
+                "port": port_num,
+                "protocol": protocol,
+                "service": service,
+                "version": version.strip(),
+            }
+        )
     return ports
+
+
+def _print_nmap_results(ports: list[dict[str, Any]], target: str) -> None:
+    """Print the open-ports table; 'no open ports' fallback otherwise."""
+    if not ports:
+        console.print("  [dim]No open ports found (or scan failed).[/dim]")
+        return
+    table = Table(title=f"Open Ports on {target}", show_lines=False)
+    table.add_column("Port", style="green")
+    table.add_column("Protocol")
+    table.add_column("Service", style="cyan")
+    table.add_column("Version", style="dim")
+    for p in ports:
+        table.add_row(str(p["port"]), p["protocol"], p["service"], p["version"])
+    console.print(table)
 
 
 # ===== HTTP Endpoint Probing =====
@@ -617,60 +670,77 @@ async def async_main() -> None:
         )
     )
 
-    # Resolve subnet
+    _resolve_subnet(args)
+
+    discovered_hosts, mdns_services, arp_entries = await _run_discovery_phase(args)
+    nmap_ports = await _run_port_scan_phase(discovered_hosts, args)
+    http_endpoints = await _run_http_probe_phase(discovered_hosts, args)
+
+    save_results(
+        Path(args.output_dir), mdns_services, arp_entries, nmap_ports, http_endpoints, args
+    )
+    print_summary(mdns_services, arp_entries, nmap_ports, http_endpoints)
+
+
+def _resolve_subnet(args: argparse.Namespace) -> None:
+    """Auto-detect subnet if not given; print a banner either way."""
     if args.subnet is None:
         args.subnet = detect_subnet()
         console.print(f"  Auto-detected subnet: [bold]{args.subnet}[/bold]")
     else:
         console.print(f"  Using subnet: [bold]{args.subnet}[/bold]")
 
-    # Collect all discovered host IPs for downstream scanning
+
+async def _run_discovery_phase(
+    args: argparse.Namespace,
+) -> tuple[set[str], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run mDNS + ARP discovery (or skip if --target-ip). Return hosts, services, arp."""
     discovered_hosts: set[str] = set()
 
-    # If a target IP is specified, skip discovery
     if args.target_ip:
         console.print(f"  Target IP specified: [bold]{args.target_ip}[/bold]")
         discovered_hosts.add(args.target_ip)
-        mdns_services: list[dict[str, Any]] = []
-        arp_entries: list[dict[str, Any]] = []
-    else:
-        # Run mDNS discovery
-        mdns_services = await run_mdns_discovery(args.mdns_time)
-        for svc in mdns_services:
-            for addr in svc.get("addresses", []):
-                discovered_hosts.add(addr)
+        return discovered_hosts, [], []
 
-        # Run ARP table scan
-        arp_entries = scan_arp_table()
-        for entry in arp_entries:
-            if entry.get("oui_match"):
-                discovered_hosts.add(entry["ip"])
+    mdns_services = await run_mdns_discovery(args.mdns_time)
+    for svc in mdns_services:
+        for addr in svc.get("addresses", []):
+            discovered_hosts.add(addr)
 
-    # Port scan (if requested)
-    nmap_ports: list[dict[str, Any]] = []
-    if args.port_scan:
-        for host in sorted(discovered_hosts):
-            nmap_ports.extend(run_nmap_scan(host))
+    arp_entries = scan_arp_table()
+    for entry in arp_entries:
+        if entry.get("oui_match"):
+            discovered_hosts.add(entry["ip"])
 
-    # HTTP probing (if requested)
-    http_endpoints: list[dict[str, Any]] = []
-    if args.http_probe:
-        probe_hosts = sorted(discovered_hosts) if discovered_hosts else []
-        # If no hosts discovered but we have a subnet, probe isn't useful without targets
-        if not probe_hosts:
-            console.print(
-                "  [yellow]No hosts discovered for HTTP probing. "
-                "Use --target-ip to probe a specific host.[/yellow]"
-            )
-        else:
-            http_endpoints = await run_http_probing(probe_hosts)
+    return discovered_hosts, mdns_services, arp_entries
 
-    # Save results
-    output_dir = Path(args.output_dir)
-    save_results(output_dir, mdns_services, arp_entries, nmap_ports, http_endpoints, args)
 
-    # Print summary
-    print_summary(mdns_services, arp_entries, nmap_ports, http_endpoints)
+async def _run_port_scan_phase(
+    discovered_hosts: set[str], args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    """Run nmap on each discovered host if --port-scan was set; [] otherwise."""
+    if not args.port_scan:
+        return []
+    ports: list[dict[str, Any]] = []
+    for host in sorted(discovered_hosts):
+        ports.extend(run_nmap_scan(host))
+    return ports
+
+
+async def _run_http_probe_phase(
+    discovered_hosts: set[str], args: argparse.Namespace
+) -> list[dict[str, Any]]:
+    """Run HTTP probing on each discovered host if --http-probe was set; [] otherwise."""
+    if not args.http_probe:
+        return []
+    probe_hosts = sorted(discovered_hosts) if discovered_hosts else []
+    if not probe_hosts:
+        console.print(
+            "  [yellow]No hosts discovered for HTTP probing. "
+            "Use --target-ip to probe a specific host.[/yellow]"
+        )
+        return []
+    return await run_http_probing(probe_hosts)
 
 
 def main() -> None:
