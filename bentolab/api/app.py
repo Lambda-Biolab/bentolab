@@ -298,10 +298,9 @@ async def _status(request: Request) -> StatusResponse:
             ],
         )
 
-    temps = TemperatureSnapshot(
-        current=float(raw.block_temperature),
-        lid=float(raw.lid_temperature),
+    temps = TemperatureSnapshot.from_readings(
         block=float(raw.block_temperature),
+        lid=float(raw.lid_temperature),
     )
     run_info = None
     if raw.running:
@@ -483,10 +482,9 @@ async def _get_run_status_handler(run_id: str, request: Request) -> RunStatusDet
         else None
     )
     temperature = (
-        TemperatureSnapshot(
-            current=detail.temperature.block,
-            lid=detail.temperature.lid,
+        TemperatureSnapshot.from_readings(
             block=detail.temperature.block,
+            lid=detail.temperature.lid,
         )
         if detail.temperature is not None
         else None

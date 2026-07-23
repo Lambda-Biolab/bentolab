@@ -52,6 +52,16 @@ class TemperatureSnapshot(BaseModel):
     lid: float | None = Field(default=None, description="Lid temperature")
     block: float | None = Field(default=None, description="Block temperature (alias)")
 
+    @classmethod
+    def from_readings(cls, block: float | None, lid: float | None) -> TemperatureSnapshot:
+        """Construct from raw block/lid readings.
+
+        ``current`` and ``block`` carry the same value — the API uses
+        both names for backward compatibility with clients written
+        against either convention.
+        """
+        return cls(current=block, lid=lid, block=block)
+
 
 class RunStateInfo(BaseModel):
     """Run state summary."""
