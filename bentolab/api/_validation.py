@@ -16,6 +16,11 @@ from typing import Any
 
 from ..models import PCRProfile
 
+# Type alias for validate_profile's return tuple.
+# (ok, errors, warnings, parsed_profile) — parsed_profile is None when
+# the input dict couldn't even be parsed into a PCRProfile.
+ProfileValidationResult = tuple[bool, list[str], list[str], "PCRProfile | None"]
+
 # Instrument-safe parameter ranges.
 TEMP_MIN = 4.0
 TEMP_MAX = 100.0
@@ -29,11 +34,22 @@ CYCLES_MAX = 999
 
 def validate_profile(
     profile_dict: dict[str, Any],
-) -> tuple[bool, list[str], list[str]]:
+) -> ProfileValidationResult:
     """Validate a PCR profile dict without hardware side effects.
 
-    Returns ``(ok, errors, warnings)``. ``errors`` empty means the
-    profile is acceptable to start a run; ``warnings`` are advisory.
+    Returns ``(ok, errors, warnings, parsed_profile)``.
+
+    - ``ok``: True if no errors (warnings may still be present)
+    - ``errors``: hard validation failures (e.g. temperature out of range)
+    - ``warnings``: advisory (e.g. name is "Untitled")
+    - ``parsed_profile``: the parsed :class:`PCRProfile`, or ``None`` if
+      the input dict couldn't even be parsed (in which case ``ok`` is
+      False and the parse error is in ``errors``)
+
+    Callers that already need the parsed profile (e.g. ``_dry_run``
+    for ``estimated_runtime_seconds()``) can use the returned
+    ``parsed_profile`` instead of calling ``PCRProfile.from_dict``
+    a second time.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -43,7 +59,7 @@ def validate_profile(
         profile = PCRProfile.from_dict(profile_dict)
     except (ValueError, KeyError, TypeError) as exc:
         errors.append(f"Invalid profile structure: {exc}")
-        return False, errors, warnings
+        return False, errors, warnings, None
 
     # 2. Name
     if not profile.name or profile.name == "Untitled":
@@ -80,7 +96,7 @@ def validate_profile(
     if profile.hold_temperature < 0 or profile.hold_temperature > TEMP_MAX:
         warnings.append(f"Hold temperature {profile.hold_temperature} C is unusual")
 
-    return len(errors) == 0, errors, warnings
+    return len(errors) == 0, errors, warnings, profile
 
 
 def _validate_step(
@@ -110,5 +126,6 @@ __all__ = [
     "LID_TEMP_MIN",
     "TEMP_MAX",
     "TEMP_MIN",
+    "ProfileValidationResult",
     "validate_profile",
 ]

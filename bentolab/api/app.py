@@ -240,22 +240,17 @@ async def _status(request: Request) -> StatusResponse:
 
 async def _validate_profile_handler(body: ProfileValidationRequest) -> ProfileValidationResponse:
     """POST /profiles/validate -- validate a PCR profile without hardware."""
-    ok, errors, warnings = validate_profile(body.profile)
+    ok, errors, warnings, _profile = validate_profile(body.profile)
     return ProfileValidationResponse(ok=ok, errors=errors, warnings=warnings)
 
 
 async def _dry_run(body: DryRunRequest) -> DryRunResponse:
     """POST /runs/dry-run -- simulate a run without hardware."""
-    # 1. Validate the profile
-    ok, errors, warnings = validate_profile(body.profile)
+    # 1. Validate the profile (gets the parsed profile in one pass)
+    ok, errors, warnings, profile = validate_profile(body.profile)
     if not ok:
         return DryRunResponse(ok=False, errors=errors)
-
-    # 2. Build PCRProfile for simulation
-    try:
-        profile = PCRProfile.from_dict(body.profile)
-    except (ValueError, KeyError, TypeError) as exc:
-        return DryRunResponse(ok=False, errors=[str(exc)])
+    assert profile is not None  # noqa: S101  type-narrowing for pyright: ok=True guarantees a parsed profile
 
     total_duration = profile.estimated_runtime_seconds()
 
