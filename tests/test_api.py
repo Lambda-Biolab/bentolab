@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from copy import deepcopy
 from typing import Any
 
 import pytest
@@ -54,6 +56,8 @@ class StubBleClient:
         }
         self._start_run_fail: bool = False
         self._abort_run_fail: bool = False
+        # Status callback registry (for SSE / events tests).
+        self._status_callbacks: list[Any] = []
 
     @property
     def is_connected(self) -> bool:
@@ -90,6 +94,20 @@ class StubBleClient:
             lid_temperature=self._run_status["lid_temperature"],
             elapsed_seconds=float(self._run_status["elapsed_seconds"]),
         )
+
+    def on_status(self, callback: Any) -> None:
+        """Register a status callback (for SSE tests)."""
+        self._status_callbacks.append(callback)
+
+    def off_status(self, callback: Any) -> None:
+        """Remove a previously-registered status callback. No-op if absent."""
+        with contextlib.suppress(ValueError):
+            self._status_callbacks.remove(callback)
+
+    def emit_status(self, status: StatusBroadcast) -> None:
+        """Test helper: fire a status broadcast to all registered callbacks."""
+        for cb in list(self._status_callbacks):
+            cb(status)
 
 
 # ---------------------------------------------------------------------------
@@ -526,17 +544,49 @@ class TestStartRun:
         assert stub._started_profile is not None
         assert stub._started_profile.name == "Standard PCR"
 
-    def test_start_run_on_locked_device_rejected(self, client, stub):
+    def test_start_run_idempotent_returns_existing_run(self, client, stub):
+        """Second POST /runs with the same profile + device returns the existing run.
+
+        Idempotency contract: the elabFTW gateway can safely retry a
+        start_run call without coordinating a lock. The second call
+        returns 200 OK with was_already_running=True and the same
+        run_id; start_run is NOT called twice on the hardware.
+        """
+        resp1 = client.post("/runs", json=_run_body())
+        assert resp1.status_code == 200
+        run_id_1 = resp1.json()["run_id"]
+        assert resp1.json()["was_already_running"] is False
+
+        # Reset the stub's start_run counter so we can assert it isn't
+        # called again on the second request.
+        stub.start_run_called = False
+
+        resp2 = client.post("/runs", json=_run_body())
+        assert resp2.status_code == 200
+        body2 = resp2.json()
+        assert body2["run_id"] == run_id_1
+        assert body2["was_already_running"] is True
+        assert stub.start_run_called is False
+
+    def test_start_run_different_profile_on_locked_device_still_rejected(self, client, stub):
+        """Idempotency does NOT apply when the profile or device differs.
+
+        Only same-profile-on-same-device retries return the existing
+        run. A different profile (or different device) is treated as
+        a new request and falls through to preflight, which rejects it
+        because the device is locked.
+        """
         # First run succeeds
         resp1 = client.post("/runs", json=_run_body())
         assert resp1.status_code == 200
 
-        # Second run on same device is rejected
-        resp2 = client.post("/runs", json=_run_body())
+        # Second run with a different profile name -> preflight fails
+        different_profile = deepcopy(VALID_PROFILE)
+        different_profile["name"] = "Different PCR"
+        resp2 = client.post("/runs", json=_run_body({"profile": different_profile}))
         assert resp2.status_code == 400
         data = resp2.json()
         assert "preflight_failed" in str(data)
-        assert "busy" in str(data)
 
 
 # ===================================================================
@@ -730,12 +780,25 @@ class TestPreflight:
         # Preflight includes profile validation, so invalid lid temp fails
         assert resp.status_code == 400
 
-    def test_preflight_fails_on_locked_device(self, client, stub):
-        # First run acquires lock
-        client.post("/runs", json=_run_body())
-        # Second run must fail preflight
-        resp = client.post("/runs", json=_run_body())
-        assert resp.status_code == 400
+    def test_preflight_fails_on_locked_device_with_different_profile(self, client, stub):
+        """A run with a different profile on a locked device still fails preflight.
+
+        Idempotency only returns the existing run when the profile name
+        and device address match. Any other request falls through to
+        preflight, which detects the held lock and rejects the run.
+        """
+        # First run acquires the lock
+        resp1 = client.post("/runs", json=_run_body())
+        assert resp1.status_code == 200
+
+        # Second run with a different profile name -> preflight must fail
+        different_profile = deepcopy(VALID_PROFILE)
+        different_profile["name"] = "Other Profile"
+        resp2 = client.post("/runs", json=_run_body({"profile": different_profile}))
+        assert resp2.status_code == 400
+        data = resp2.json()
+        assert "preflight_failed" in str(data)
+        assert "busy" in str(data)
 
 
 # ===================================================================
@@ -843,3 +906,333 @@ class TestWritebackPath:
         run_mgr = client.app.state.run_manager
         run = run_mgr.get_run(run_id)
         assert run["writeback_state"] == "pending"
+
+
+# ===================================================================
+# Long-polling on GET /runs/{id}
+# ===================================================================
+
+
+class TestLongPolling:
+    """GET /runs/{id}?wait=N blocks until the run reaches a terminal state."""
+
+    def test_wait_zero_returns_immediately(self, client):
+        create_resp = client.post("/runs", json=_run_body())
+        run_id = create_resp.json()["run_id"]
+
+        # No wait -> returns right away, state is running
+        resp = client.get(f"/runs/{run_id}?wait=0")
+        assert resp.status_code == 200
+        assert resp.json()["state"] == "running"
+
+    def test_wait_blocks_until_terminal(self, client):
+        from bentolab.runs import RunLifecycle
+
+        create_resp = client.post("/runs", json=_run_body())
+        run_id = create_resp.json()["run_id"]
+
+        # Schedule a transition to terminal in the background. The
+        # GET ?wait=2 should block until the transition lands and
+        # then return the terminal state.
+        import threading
+        import time as _time
+
+        def complete_after_delay() -> None:
+            _time.sleep(0.3)
+            client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)
+
+        threading.Thread(target=complete_after_delay, daemon=True).start()
+
+        t0 = _time.monotonic()
+        resp = client.get(f"/runs/{run_id}?wait=5")
+        elapsed = _time.monotonic() - t0
+
+        assert resp.status_code == 200
+        # Returned the terminal state, not the original running one
+        assert resp.json()["state"] == "completed"
+        # Waited at least until the scheduled transition (>= 0.3s)
+        assert elapsed >= 0.2
+        # And didn't wait the full 5s budget
+        assert elapsed < 4.0
+
+    def test_wait_returns_on_timeout_if_still_running(self, client):
+        create_resp = client.post("/runs", json=_run_body())
+        run_id = create_resp.json()["run_id"]
+
+        # No transition scheduled; wait=1 should return the current
+        # running state after ~1s.
+        import time as _time
+
+        t0 = _time.monotonic()
+        resp = client.get(f"/runs/{run_id}?wait=1")
+        elapsed = _time.monotonic() - t0
+
+        assert resp.status_code == 200
+        assert resp.json()["state"] == "running"
+        # Polled roughly on the 0.5s cadence; allow generous tolerance
+        assert 0.5 <= elapsed < 2.0
+
+    def test_wait_terminal_returns_immediately(self, client):
+        from bentolab.runs import RunLifecycle
+
+        create_resp = client.post("/runs", json=_run_body())
+        run_id = create_resp.json()["run_id"]
+        client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)
+
+        # Terminal state -> no waiting, return immediately
+        resp = client.get(f"/runs/{run_id}?wait=5")
+        assert resp.status_code == 200
+        assert resp.json()["state"] == "completed"
+
+    def test_wait_caps_at_60_seconds(self, client):
+        """wait param validation: values > 60 are rejected by FastAPI."""
+        create_resp = client.post("/runs", json=_run_body())
+        run_id = create_resp.json()["run_id"]
+        resp = client.get(f"/runs/{run_id}?wait=61")
+        assert resp.status_code == 422
+
+
+# ===================================================================
+# SSE telemetry stream
+# ===================================================================
+
+
+class TestSSEEvents:
+    """GET /events streams Server-Sent Events to the client.
+
+    We test the underlying :func:`stream_events` generator and the
+    :class:`EventBroker` directly, because the HTTP layer is a thin
+    ``StreamingResponse`` wrapper and a hanging test client would
+    never resolve (SSE streams are intentionally infinite).
+    """
+
+    def test_broker_publishes_to_subscribers(self, stub):
+        """The EventBroker fans out events to all current subscribers."""
+        import asyncio
+
+        from bentolab.api.events import EventBroker, TelemetryEvent
+
+        async def scenario() -> None:
+            broker = EventBroker()
+            q1 = broker.subscribe()
+            q2 = broker.subscribe()
+            assert broker.subscriber_count == 2
+
+            broker.publish(TelemetryEvent(kind="status", data={"x": 1}))
+            e1 = await asyncio.wait_for(q1.get(), timeout=1.0)
+            e2 = await asyncio.wait_for(q2.get(), timeout=1.0)
+            assert e1.kind == "status"
+            assert e2.kind == "status"
+
+            broker.unsubscribe(q1)
+            assert broker.subscriber_count == 1
+
+        asyncio.run(scenario())
+
+    def test_broker_drops_for_full_subscribers(self):
+        """A slow subscriber's full queue doesn't block other subscribers."""
+        import asyncio
+
+        from bentolab.api.events import EventBroker, TelemetryEvent
+
+        async def scenario() -> None:
+            broker = EventBroker(max_queue=2)
+            fast = broker.subscribe()
+            slow = broker.subscribe()
+            # Fill the slow subscriber's queue
+            for i in range(2):
+                broker.publish(TelemetryEvent(kind="run", data={"i": i}))
+            # Drain the fast subscriber
+            for _ in range(2):
+                await asyncio.wait_for(fast.get(), timeout=1.0)
+            # Another publish: fast should still get it, slow is full -> drop
+            broker.publish(TelemetryEvent(kind="status", data={"final": True}))
+            e = await asyncio.wait_for(fast.get(), timeout=1.0)
+            assert e.data == {"final": True}
+            # Slow's queue is still at capacity
+            assert slow.qsize() == 2
+
+        asyncio.run(scenario())
+
+    def test_stream_events_yields_connected_event(self, stub):
+        """The first event from stream_events is the ``connected`` marker."""
+        import asyncio
+
+        from bentolab.api.events import EventBroker, stream_events
+
+        async def scenario() -> None:
+            broker = EventBroker()
+            gen = stream_events(broker, stub)
+            # Pull the first chunk; the generator stays open after.
+            first = await asyncio.wait_for(anext(gen), timeout=2.0)
+            assert "event: connected" in first
+            assert "id: connected" in first
+            # Tidy close so the broker unsubscribes.
+            await gen.aclose()
+
+        asyncio.run(scenario())
+
+    def test_stream_events_attaches_and_detaches_status_callback(self, stub):
+        """stream_events registers and cleans up the on_status callback."""
+        import asyncio
+
+        from bentolab.api.events import EventBroker, stream_events
+
+        async def scenario() -> None:
+            broker = EventBroker()
+            assert len(stub._status_callbacks) == 0
+
+            gen = stream_events(broker, stub)
+            # Pull the connected event so the setup finishes
+            await asyncio.wait_for(anext(gen), timeout=2.0)
+            assert len(stub._status_callbacks) == 1
+
+            await gen.aclose()
+            # Cleanup should detach the callback
+            assert len(stub._status_callbacks) == 0
+
+        asyncio.run(scenario())
+
+
+# ===================================================================
+# API token authentication
+# ===================================================================
+
+
+class TestApiAuth:
+    """Bearer token middleware: open mode without tokens, required with tokens."""
+
+    def test_open_mode_allows_anonymous_when_no_tokens(self, client):
+        """No tokens registered -> request goes through unauthenticated."""
+        resp = client.get("/health")
+        assert resp.status_code == 200
+
+        resp = client.get("/devices")
+        assert resp.status_code == 200
+
+    def test_protected_endpoint_rejects_without_token_when_tokens_exist(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        token_path = tmp_path / "tokens.json"
+        store = TokenStore(path=token_path)
+        store.issue("AA:BB:CC:DD:EE:FF")
+        assert len(store.list()) == 1
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+
+        # No Authorization header
+        resp = c.get("/devices")
+        assert resp.status_code == 401
+        assert "Missing" in str(resp.json()) or "Bearer" in str(resp.json())
+
+    def test_protected_endpoint_accepts_valid_token(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        tok = store.issue("AA:BB:CC:DD:EE:FF")
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+
+        resp = c.get("/devices", headers={"Authorization": f"Bearer {tok.token}"})
+        assert resp.status_code == 200
+
+    def test_protected_endpoint_rejects_invalid_token(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        store.issue("AA:BB:CC:DD:EE:FF")
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+
+        resp = c.get("/devices", headers={"Authorization": "Bearer not-a-real-token"})
+        assert resp.status_code == 401
+
+    def test_health_is_always_exempt(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        store.issue("AA:BB:CC:DD:EE:FF")
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+
+        # /health must work without auth even when tokens are registered
+        resp = c.get("/health")
+        assert resp.status_code == 200
+
+    def test_openapi_is_always_exempt(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        store.issue("AA:BB:CC:DD:EE:FF")
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+
+        resp = c.get("/openapi.json")
+        assert resp.status_code == 200
+
+    def test_force_auth_blocks_when_no_tokens(self, tmp_path, stub):
+        """BENTOLAB_REQUIRE_AUTH=1 forces auth even with zero tokens."""
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        # No tokens issued
+
+        app = create_app(ble_client=stub, token_store=store, force_auth=True)
+        c = TestClient(app)
+
+        resp = c.get("/devices")
+        assert resp.status_code == 401
+
+    def test_valid_token_updates_last_used(self, tmp_path, stub):
+        from bentolab.api.app import create_app
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        tok = store.issue("AA:BB:CC:DD:EE:FF")
+        assert tok.last_used_at is None
+
+        app = create_app(ble_client=stub, token_store=store)
+        c = TestClient(app)
+        c.get("/devices", headers={"Authorization": f"Bearer {tok.token}"})
+
+        refreshed = store.lookup(tok.token)
+        assert refreshed is not None
+        assert refreshed.last_used_at is not None
+
+    def test_token_store_persists_across_instances(self, tmp_path):
+        from bentolab.api.auth import TokenStore
+
+        path = tmp_path / "tokens.json"
+        a = TokenStore(path=path)
+        tok = a.issue("AA:BB:CC:DD:EE:FF")
+
+        b = TokenStore(path=path)
+        loaded = b.list()
+        assert len(loaded) == 1
+        assert loaded[0].token == tok.token
+        assert loaded[0].device_address == "AA:BB:CC:DD:EE:FF"
+
+    def test_revoke_unknown_token_returns_false(self, tmp_path):
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        assert store.revoke("never-issued") is False
+
+    def test_revoke_issued_token_succeeds(self, tmp_path):
+        from bentolab.api.auth import TokenStore
+
+        store = TokenStore(path=tmp_path / "tokens.json")
+        tok = store.issue("AA:BB:CC:DD:EE:FF")
+        assert store.revoke(tok.token) is True
+        assert store.lookup(tok.token) is None
