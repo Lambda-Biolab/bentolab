@@ -159,13 +159,41 @@ class BentoLabBLE:
         return self._client
 
     async def _send(self, cmd: str) -> None:
-        """Send a command to the device via NUS RX."""
+        """Send a command to the device via NUS RX (fire-and-forget).
+
+        Uses ``response=False`` (BLE write command, no ACK). The
+        device's response, if any, arrives asynchronously via the
+        NUS TX notification path; see :meth:`_collect_responses` for
+        callers that need to wait for it.
+        """
         client = self._require_client()
         data = encode_command(cmd)
         try:
             await client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=False)
         except BleakError as e:
             raise BentoLabConnectionError(f"Write failed: {e}") from e
+
+    async def _send_with_gatt_response(self, cmd: str) -> None:
+        """Send a command and wait for the GATT-layer write response.
+
+        Uses ``response=True`` (BLE write request, expects an ACK at
+        the GATT protocol layer). This is slower than :meth:`_send`
+        (one extra round-trip on the air) but some firmware treats
+        the ACK as link activity and resets the link supervision
+        timer. If the link-layer inactivity timeout is the cause
+        of the t≈95s disconnect (#55), this variant may keep the
+        link alive where the bare write command cannot.
+
+        Application-level responses still arrive on NUS TX; this
+        method only blocks on the GATT ACK, not on the device's
+        app-level reply.
+        """
+        client = self._require_client()
+        data = encode_command(cmd)
+        try:
+            await client.write_gatt_char(NUS_RX_CHAR_UUID, data, response=True)
+        except BleakError as e:
+            raise BentoLabConnectionError(f"Write with response failed: {e}") from e
 
     async def _send_raw(self, data: bytes) -> None:
         """Send raw bytes to NUS RX."""
@@ -262,10 +290,15 @@ class BentoLabBLE:
         """Periodically poke the device so the firmware keeps the link.
 
         Sends ``Xa`` (handshake / device-info request) on a fixed
-        cadence. The response goes through the same notification path
-        as any other reply; nothing here waits on it. If the write
-        fails the connection is already gone, so we just exit and let
-        the disconnect callback fire.
+        cadence using the GATT write-with-response variant
+        (:meth:`_send_with_gatt_response`). The GATT-layer ACK is
+        the actual link activity some firmware uses to reset the
+        link supervision timer -- a bare write command
+        (``_send``) was insufficient and the link still dropped at
+        ~95s (see issue #55).
+
+        If the write fails the connection is already gone, so we
+        just exit and let the disconnect callback fire.
         """
         try:
             while True:
@@ -273,7 +306,7 @@ class BentoLabBLE:
                 if not self.is_connected:
                     return
                 try:
-                    await self._send("Xa")
+                    await self._send_with_gatt_response("Xa")
                 except BentoLabConnectionError:
                     return
         except asyncio.CancelledError:

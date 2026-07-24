@@ -29,7 +29,11 @@ def lab(monkeypatch: pytest.MonkeyPatch) -> BentoLabBLE:
     async def fake_send(cmd: str) -> None:
         sent.append(cmd)
 
+    async def fake_send_with_response(cmd: str) -> None:
+        sent.append(cmd)
+
     monkeypatch.setattr(inst, "_send", fake_send)
+    monkeypatch.setattr(inst, "_send_with_gatt_response", fake_send_with_response)
     inst._sent = sent  # type: ignore[attr-defined]
     return inst
 
@@ -63,7 +67,7 @@ async def test_keep_alive_swallows_send_errors(monkeypatch: pytest.MonkeyPatch) 
     async def boom(_cmd: str) -> None:
         raise BentoLabConnectionError("link gone")
 
-    monkeypatch.setattr(inst, "_send", boom)
+    monkeypatch.setattr(inst, "_send_with_gatt_response", boom)
     inst._start_keep_alive()
     await asyncio.sleep(0.1)
     assert inst._keep_alive_task is not None
