@@ -92,6 +92,7 @@ class StartedRun:
     run_id: str
     state: RunLifecycle
     started_at: str
+    was_already_running: bool = False
 
 
 @dataclass
@@ -228,6 +229,12 @@ class RunService:
     ) -> StartedRun:
         """Preflight + acquire lock + start on hardware. Returns the new run record.
 
+        Idempotent: if a run for the same profile name on the same device
+        is already active, returns that run with ``was_already_running=True``
+        instead of failing or starting a duplicate. Different profile OR
+        different device falls through to the normal preflight/start path
+        (which will then fail preflight because the device is locked).
+
         Raises:
             PreflightFailedError: hardware preflight failed.
             ApprovalRequiredError: no approval_id was supplied.
@@ -239,6 +246,27 @@ class RunService:
         if not ok:
             raise PreflightFailedError(profile_errors)
         assert profile is not None  # noqa: S101  type-narrowing for pyright: ok=True guarantees a parsed profile
+
+        # --- Idempotency check ---
+        # If a run is already active on the same device with the same
+        # profile name, return it. This makes POST /runs safe to retry
+        # from the elabFTW gateway without 409 Conflict bookkeeping.
+        existing = self._run_manager.get_active_run()
+        if existing is not None:
+            same_device = (existing.get("device_address") or "") == (device_address or "")
+            same_profile = (existing.get("profile") or {}).get("name") == profile.name
+            if same_device and same_profile:
+                logger.info(
+                    "Returning in-flight run %s for profile %s (idempotent)",
+                    existing["run_id"],
+                    profile.name,
+                )
+                return StartedRun(
+                    run_id=existing["run_id"],
+                    state=RunLifecycle(existing["state"]),
+                    started_at=existing["started_at"],
+                    was_already_running=True,
+                )
 
         # --- Preflight (hardware checks) ---
         pf_errors = await self.preflight(profile_dict, device_address)
@@ -278,6 +306,7 @@ class RunService:
             run_id=run_id,
             state=RunLifecycle.RUNNING,
             started_at=run["started_at"],
+            was_already_running=False,
         )
 
     # ------------------------------------------------------------------
