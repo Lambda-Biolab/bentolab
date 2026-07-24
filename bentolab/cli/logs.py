@@ -31,9 +31,17 @@ def list_cmd(json_output: bool = typer.Option(False, "--json")) -> None:
 @logs_app.command("show")
 def show_cmd(
     run_id: str = typer.Argument(..., help="Run-log filename (or filename stem)."),
-    json_output: bool = typer.Option(False, "--json"),
+    json_output: bool = typer.Option(
+        False, "--json", "--format", help="Emit NDJSON (jsonl) pass-through."
+    ),
 ) -> None:
-    """Stream a run-log to stdout (NDJSON pass-through with --json, pretty otherwise)."""
+    """Stream a run-log to stdout.
+
+    With ``--json`` (or ``--format jsonl``), the file is written to
+    stdout verbatim as newline-delimited JSON -- the same format
+    produced by the underlying session logger. Without ``--json``,
+    each event is pretty-printed with a timestamp and event kind.
+    """
     path = _resolve(run_id)
     if path is None:
         fail(f"run not found: {run_id}", code=2)

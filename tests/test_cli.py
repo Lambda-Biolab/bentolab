@@ -50,6 +50,43 @@ def test_profile_show_json(cli_env: Path, runner: CliRunner) -> None:
     assert payload["lid_temperature"] == 110
 
 
+def test_profile_export_json_to_stdout(cli_env: Path, runner: CliRunner) -> None:
+    """``profile export NAME`` writes a JSON document to stdout."""
+    runner.invoke(app, ["profile", "new", "demo", "--no-edit"])
+    r = runner.invoke(app, ["profile", "export", "demo"])
+    assert r.exit_code == 0, r.stdout
+    payload = json.loads(r.stdout.splitlines()[-1])
+    assert payload["name"] == "demo"
+    assert payload["lid_temperature"] == 110
+
+
+def test_profile_export_yaml_to_stdout(cli_env: Path, runner: CliRunner) -> None:
+    """``profile export NAME --format yaml`` writes YAML to stdout."""
+    runner.invoke(app, ["profile", "new", "demo", "--no-edit"])
+    r = runner.invoke(app, ["profile", "export", "demo", "--format", "yaml"])
+    assert r.exit_code == 0, r.stdout
+    assert "name: demo" in r.stdout
+    assert "lid_temperature: 110" in r.stdout
+
+
+def test_profile_export_to_file(cli_env: Path, runner: CliRunner) -> None:
+    """``profile export NAME --output PATH`` writes the file and exits 0."""
+    runner.invoke(app, ["profile", "new", "demo", "--no-edit"])
+    out = cli_env / "demo.json"
+    r = runner.invoke(app, ["profile", "export", "demo", "--output", str(out)])
+    assert r.exit_code == 0, r.stdout
+    assert out.exists()
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload["name"] == "demo"
+
+
+def test_profile_export_unknown_profile_exits_2(cli_env: Path, runner: CliRunner) -> None:
+    """Unknown profile name -> exit 2 (user error)."""
+    r = runner.invoke(app, ["profile", "export", "ghost"])
+    assert r.exit_code == 2
+    assert "not found" in r.output
+
+
 def test_profile_delete(cli_env: Path, runner: CliRunner) -> None:
     runner.invoke(app, ["profile", "new", "demo", "--no-edit"])
     r = runner.invoke(app, ["profile", "delete", "demo"])
