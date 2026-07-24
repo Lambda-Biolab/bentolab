@@ -66,6 +66,7 @@ def profile_to_dict(profile: PCRProfile) -> dict[str, Any]:
         ],
         "final_extension": _step_to_dict(profile.final_extension),
         "hold_temperature": profile.hold_temperature,
+        "hold_duration_s": profile.hold_duration_s,
         "notes": profile.notes,
     }
 
@@ -92,6 +93,7 @@ def profile_from_dict(data: dict[str, Any]) -> PCRProfile:
             data.get("final_extension"), default=_DEFAULT_FINAL_EXTENSION
         ),
         hold_temperature=float(data.get("hold_temperature", _DEFAULT_HOLD_TEMPERATURE)),
+        hold_duration_s=int(data.get("hold_duration_s", 0)),
         lid_temperature=float(data.get("lid_temperature", _DEFAULT_LID_TEMPERATURE)),
         notes=str(data.get("notes", "")),
     )
