@@ -1,0 +1,20 @@
+bentolab
+Copyright 2026 Lambda Biolab
+
+This product includes software developed by Lambda Biolab and the
+bentolab contributors (https://github.com/Lambda-Biolab/bentolab).
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This is an UNOFFICIAL, community-maintained library. It is not
+affiliated with, endorsed by, or supported by Bento Bioworks Ltd.,
+the manufacturer of the Bento Lab PCR workstation. "Bento Lab" and
+"Bento Bioworks" are trademarks of their respective owners; no
+trademark license is granted by this distribution.
+
+The Bluetooth Low Energy protocol used by this library was decoded
+through black-box observation of HCI snoop captures and Android APK
+decompilation, in line with the interoperability exceptions in
+17 U.S.C. § 1201(f) (DMCA) and Article 6 of EU Software Directive
+2009/24/EC. No firmware, copyrighted source code, or proprietary
+documentation from Bento Bioworks is redistributed in this work.
