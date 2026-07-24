@@ -92,7 +92,7 @@ class BentoLabBLE:
         address: str | None = None,
         name_filter: str = r"(?i)bento",
         auto_reconnect: bool = True,
-        keep_alive_seconds: float = 30.0,
+        keep_alive_seconds: float = 15.0,
     ):
         self.address = address
         self.name_filter = re.compile(name_filter)
@@ -337,6 +337,11 @@ class BentoLabBLE:
     def on_status(self, callback: Callable[[StatusBroadcast], Any]) -> None:
         """Register a callback for status broadcasts (~5s interval)."""
         self._status_callbacks.append(callback)
+
+    def off_status(self, callback: Callable[[StatusBroadcast], Any]) -> None:
+        """Remove a previously-registered status callback. No-op if not present."""
+        with contextlib.suppress(ValueError):
+            self._status_callbacks.remove(callback)
 
     def on_disconnect(self, callback: Callable[[], Any]) -> None:
         """Register a callback for unexpected disconnections."""
