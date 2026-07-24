@@ -170,12 +170,20 @@ class DryRunResponse(BaseModel):
 
 
 class RunAcceptedResponse(BaseModel):
-    """Response from POST /runs when a run is accepted."""
+    """Response from POST /runs when a run is accepted (or already running)."""
 
     ok: bool
     run_id: str
     state: RunLifecycle
     started_at: str
+    was_already_running: bool = Field(
+        default=False,
+        description=(
+            "True if this call returned an existing in-flight run that "
+            "matched the requested profile + device. False if a new run "
+            "was started. The HTTP status is 200 in both cases."
+        ),
+    )
 
 
 class RunAbortResponse(BaseModel):

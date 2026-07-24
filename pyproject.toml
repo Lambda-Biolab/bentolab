@@ -47,6 +47,7 @@ dev = [
     "pyright>=1.1.0",
     "complexipy>=0.8",
     "aiohttp>=3.9.0",
+    "requests>=2.31",  # lab-copilot-gateway HttpBentoLabClient
 ]
 
 [tool.pytest.ini_options]
