@@ -8,4 +8,11 @@ exclude = [
     "^https://github\\.com/Lambda-Biolab/",
     "^https://hub\\.docker\\.com",
     "^https://pypi\\.org",
+    # EUR-Lex is behind a CloudFront WAF that returns 202 to
+    # HEAD/curl requests (it serves a JS challenge page to
+    # non-browser clients). The URLs themselves are correct and
+    # load fine in a browser -- they're just unreachable by
+    # automated link checkers. The legal reference is intentional
+    # in docs/LICENSING_ASSESSMENT.md.
+    "^https://eur-lex\\.europa\\.eu",
 ]
