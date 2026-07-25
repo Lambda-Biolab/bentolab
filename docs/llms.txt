@@ -1,6 +1,6 @@
 # bentolab
 
-> 
+> Python BLE/Wi-Fi control library for Bento Lab PCR workstations — reverse-engineered protocol, async client, FastAPI HTTP wrapper, and Typer CLI.
 
 ## Documentation
 
