@@ -123,6 +123,14 @@ class BleClientProtocol(Protocol):
         """Remove a previously-registered status callback. No-op if absent."""
         ...
 
+    def on_disconnect(self, callback: Any) -> None:
+        """Register a callback for unexpected disconnections."""
+        ...
+
+    def off_disconnect(self, callback: Any) -> None:
+        """Remove a previously-registered disconnect callback. No-op if absent."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Profile validation helpers (constants + validate_profile live in _validation.py)

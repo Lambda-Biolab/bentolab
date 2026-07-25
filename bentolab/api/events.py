@@ -129,6 +129,20 @@ def _sse_comment(text: str) -> str:
     return f": {text}\n\n"
 
 
+def _sse_retry(ms: int) -> str:
+    """Format an SSE ``retry: <ms>`` hint.
+
+    Per the SSE spec, a bare ``retry: <ms>`` line tells the client
+    how long to wait before reconnecting. The Bento Lab firmware
+    has a hard ~90s connection lifetime that no GATT-layer
+    keep-alive can extend (see issue #55), so the SSE stream uses
+    this hint to ask the gateway to reconnect after the link
+    drops. The gap is brief (1s by default) and the underlying
+    run continues on the device unaffected.
+    """
+    return f"retry: {ms}\n\n"
+
+
 def _status_to_dict(status: Any) -> dict[str, Any]:
     return {
         "running": bool(getattr(status, "running", False)),
@@ -150,31 +164,62 @@ async def stream_events(
     *,
     poll_interval: float = _DEFAULT_POLL_INTERVAL_S,
     keepalive_interval: float = _KEEPALIVE_INTERVAL_S,
+    retry_after_ms: int = 1000,
 ) -> AsyncIterator[str]:
     """Yield SSE-formatted text for as long as the client stays connected.
 
-    Thin wrapper that sets up broker subscription and BLE status
-    callback, yields initial events, runs the dispatch loop, and
-    cleans up on disconnect. See :func:`_initial_events` and
-    :func:`_dispatch_loop` for the per-stage details.
+    Sets up broker subscription, BLE status callback, and a BLE
+    disconnect tracker. If the underlying BLE link drops (the
+    Bento Lab firmware has a hard ~90s connection lifetime, see
+    issue #55), emits a final ``disconnected`` event followed by a
+    ``retry: <ms>`` hint so the client knows to reconnect after
+    the gap. The underlying run continues on the device
+    unaffected -- the reconnect just re-attaches the notification
+    stream.
+
+    See :func:`_initial_events` and :func:`_dispatch_loop` for the
+    per-stage details.
     """
     queue = broker.subscribe()
+    disconnect_event = asyncio.Event()
     status_cb: Any = None
+    disconnect_cb: Any = None
+
     if ble is not None:
         status_cb = lambda s: broker.publish(  # noqa: E731
             TelemetryEvent(kind="status", data=_status_to_dict(s))
         )
         ble.on_status(status_cb)
 
+        def _on_ble_disconnect() -> None:
+            # Signal the dispatch loop to wrap up. The loop will
+            # emit the final disconnected event + retry hint.
+            disconnect_event.set()
+
+        disconnect_cb = _on_ble_disconnect
+        ble.on_disconnect(disconnect_cb)
+
     try:
         async for chunk in _initial_events(ble):
             yield chunk
-        async for chunk in _dispatch_loop(broker, ble, queue, poll_interval, keepalive_interval):
+        async for chunk in _dispatch_loop(
+            broker,
+            ble,
+            queue,
+            poll_interval,
+            keepalive_interval,
+            disconnect_event,
+            retry_after_ms,
+        ):
             yield chunk
     finally:
-        if ble is not None and status_cb is not None:
-            with contextlib.suppress(Exception):
-                ble.off_status(status_cb)
+        if ble is not None:
+            if status_cb is not None:
+                with contextlib.suppress(Exception):
+                    ble.off_status(status_cb)
+            if disconnect_cb is not None:
+                with contextlib.suppress(Exception):
+                    ble.off_disconnect(disconnect_cb)
         broker.unsubscribe(queue)
 
 
@@ -203,13 +248,31 @@ async def _dispatch_loop(
     queue: asyncio.Queue[TelemetryEvent],
     poll_interval: float,
     keepalive_interval: float,
+    disconnect_event: asyncio.Event,
+    retry_after_ms: int,
 ) -> AsyncIterator[str]:
-    """Yield events, run periodic run-status polls, and emit keep-alives."""
+    """Yield events, run periodic run-status polls, emit keep-alives.
+
+    Self-heals on BLE disconnect: when ``disconnect_event`` is set
+    (the BLE link dropped), emits a final ``disconnected`` event
+    with an empty data payload and a ``retry: <ms>`` hint, then
+    returns. The surrounding :func:`stream_events` generator
+    closes the SSE response right after, which signals the client
+    (e.g. the elabFTW gateway) to reconnect after the retry
+    interval.
+    """
     loop = asyncio.get_event_loop()
     last_poll = loop.time()
     last_keepalive = loop.time()
 
     while True:
+        # If the BLE link dropped, emit a final disconnected event +
+        # retry hint and return. The stream then closes cleanly.
+        if disconnect_event.is_set():
+            yield _sse("disconnected", {"retry_after_ms": retry_after_ms}, event_id="disconnected")
+            yield _sse_retry(retry_after_ms)
+            return
+
         # Wait briefly for the next broker event.
         try:
             event = await asyncio.wait_for(queue.get(), timeout=0.5)

@@ -380,6 +380,11 @@ class BentoLabBLE:
         """Register a callback for unexpected disconnections."""
         self._disconnect_callbacks.append(callback)
 
+    def off_disconnect(self, callback: Callable[[], Any]) -> None:
+        """Remove a previously-registered disconnect callback. No-op if absent."""
+        with contextlib.suppress(ValueError):
+            self._disconnect_callbacks.remove(callback)
+
     # ------------------------------------------------------------------
     # Profile management
     # ------------------------------------------------------------------

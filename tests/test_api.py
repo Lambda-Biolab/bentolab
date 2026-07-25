@@ -56,8 +56,9 @@ class StubBleClient:
         }
         self._start_run_fail: bool = False
         self._abort_run_fail: bool = False
-        # Status callback registry (for SSE / events tests).
+        # Status + disconnect callback registries (for SSE / events tests).
         self._status_callbacks: list[Any] = []
+        self._disconnect_callbacks: list[Any] = []
 
     @property
     def is_connected(self) -> bool:
@@ -104,10 +105,24 @@ class StubBleClient:
         with contextlib.suppress(ValueError):
             self._status_callbacks.remove(callback)
 
+    def on_disconnect(self, callback: Any) -> None:
+        """Register a disconnect callback (for SSE tests)."""
+        self._disconnect_callbacks.append(callback)
+
+    def off_disconnect(self, callback: Any) -> None:
+        """Remove a previously-registered disconnect callback. No-op if absent."""
+        with contextlib.suppress(ValueError):
+            self._disconnect_callbacks.remove(callback)
+
     def emit_status(self, status: StatusBroadcast) -> None:
         """Test helper: fire a status broadcast to all registered callbacks."""
         for cb in list(self._status_callbacks):
             cb(status)
+
+    def emit_disconnect(self) -> None:
+        """Test helper: fire a disconnect event to all registered callbacks."""
+        for cb in list(self._disconnect_callbacks):
+            cb()
 
 
 # ---------------------------------------------------------------------------
@@ -1090,6 +1105,45 @@ class TestSSEEvents:
             await gen.aclose()
             # Cleanup should detach the callback
             assert len(stub._status_callbacks) == 0
+
+        asyncio.run(scenario())
+
+    def test_stream_events_emits_retry_hint_on_ble_disconnect(self, stub):
+        """When the BLE link drops, the stream emits a retry hint and closes.
+
+        Regression for the Bento Lab firmware's hard ~90s connection
+        lifetime (issue #55). The SSE stream should self-heal: emit a
+        ``disconnected`` event with a ``retry: <ms>`` hint, then close
+        so the client (e.g. the elabFTW gateway) knows to reconnect.
+        """
+        import asyncio
+
+        from bentolab.api.events import EventBroker, stream_events
+
+        async def scenario() -> None:
+            broker = EventBroker()
+            assert len(stub._disconnect_callbacks) == 0
+
+            gen = stream_events(broker, stub, retry_after_ms=250)
+            # Pull the connected event so the setup finishes
+            await asyncio.wait_for(anext(gen), timeout=2.0)
+            # The disconnect callback should be registered
+            assert len(stub._disconnect_callbacks) == 1
+
+            # Simulate the BLE link dropping
+            stub.emit_disconnect()
+
+            # Next yielded chunk should be the disconnected event + retry hint
+            chunks = []
+            with contextlib.suppress(StopAsyncIteration):
+                for _ in range(5):
+                    chunks.append(await asyncio.wait_for(anext(gen), timeout=2.0))
+            joined = "".join(chunks)
+
+            assert "event: disconnected" in joined
+            assert "retry: 250" in joined
+            # The disconnect callback should be cleaned up after close
+            assert len(stub._disconnect_callbacks) == 0
 
         asyncio.run(scenario())
 
