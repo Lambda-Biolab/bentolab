@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 import typer
 
@@ -118,6 +119,43 @@ def import_cmd(
     except profile_store.ProfileExistsError:
         fail(f"profile already exists: {profile.name} (use --overwrite)", code=2)
     stdout.print(f"[green]Imported:[/green] {out}")
+
+
+@profile_app.command("export")
+def export_cmd(
+    name: str = typer.Argument(..., help="Profile name to export."),
+    fmt: Literal["json", "yaml"] = typer.Option("json", "--format", help="Output format."),
+    output: str | None = typer.Option(
+        None, "--output", "-o", help="Write to this path (default: stdout)."
+    ),
+) -> None:
+    """Export a profile as JSON or YAML, for round-trip into other tools.
+
+    Without ``--output``, the document is written to stdout. With
+    ``--output``, the file is created (or overwritten) at the given
+    path. JSON is the default because it's the elabFTW custom-field
+    format; YAML is provided for human-readable archives.
+    """
+    try:
+        profile = profile_store.load(name)
+    except profile_store.ProfileNotFoundError:
+        fail(f"profile not found: {name}", code=2)
+
+    text = profile.to_json() if fmt == "json" else profile.to_yaml()
+
+    if output is None:
+        if fmt == "json":
+            emit_json(profile.to_dict())
+        else:
+            stdout.print(text, markup=False, highlight=False)
+        return
+
+    out_path = Path(output)
+    try:
+        out_path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        fail(f"failed to write {output}: {exc}", code=3)
+    stdout.print(f"[green]Exported:[/green] {out_path}")
 
 
 def _edit(initial: str, *, suffix: str) -> str:

@@ -96,5 +96,8 @@ final_extension:
   temperature: 72
   duration: 300
 hold_temperature: 4
+# hold_duration_s is opt-in. Default 0 = no hold emitted. Set to e.g.
+# 86400 for a 24 h overnight hold at hold_temperature.
+hold_duration_s: 0
 notes: ""
 """

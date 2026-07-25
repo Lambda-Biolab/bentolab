@@ -43,13 +43,34 @@ class CycleStep:
 
 @dataclass
 class PCRProfile:
-    """A complete PCR thermal cycling profile."""
+    """A complete PCR thermal cycling profile.
+
+    Post-run hold
+    -------------
+    Set ``hold_duration_s`` to a positive value to instruct the
+    device firmware to maintain ``hold_temperature`` (default 4 °C)
+    for that many seconds after the final extension completes. This
+    is useful for protocols that overnight-hold samples at 4 °C
+    before manual retrieval.
+
+    The hold is **opt-in**: the default ``hold_duration_s=0`` means
+    no hold stage is emitted at all. This keeps demos, validation
+    runs, and any other "fire and forget" use case from showing a
+    24 h or longer hold on the device's display.
+
+    When the hold IS enabled, the duration you set is what gets
+    emitted to the device. There is no separate "default" — pick
+    the duration that matches your protocol (a common overnight
+    value is 86 400 s = 24 h; see
+    ``_REFERENCE_HOLD_DURATION_SECONDS`` for a reusable constant).
+    """
 
     name: str = "Untitled"
     initial_denaturation: ThermalStep = field(default_factory=lambda: _DEFAULT_INITIAL_DENATURATION)
     cycles: list[CycleStep] = field(default_factory=list)
     final_extension: ThermalStep = field(default_factory=lambda: _DEFAULT_FINAL_EXTENSION)
     hold_temperature: float = 4.0
+    hold_duration_s: int = 0
     lid_temperature: float = 110.0
     notes: str = ""
 
@@ -142,10 +163,10 @@ class PCRProfile:
             cycles.append((extend_idx, denat_idx, cycle.repeat_count))
 
         stages.append((self.final_extension.temperature, self.final_extension.duration))
-        # Post-run hold so the device maintains ``hold_temperature`` between
-        # runs. 86_400 s (24 h) is well within int32 and a standard biotech
-        # default for overnight holds.
-        stages.append((self.hold_temperature, _DEFAULT_HOLD_DURATION_SECONDS))
+        # Opt-in post-run hold. No hold by default so demos and one-shot
+        # runs don't show a 24 h (or longer) hold on the device's display.
+        if self.hold_duration_s > 0:
+            stages.append((self.hold_temperature, self.hold_duration_s))
         return stages, cycles
 
     def estimated_runtime_seconds(self) -> int:
@@ -171,6 +192,17 @@ class PCRProfile:
 
         return profile_to_yaml(self)
 
+    def to_json(self, *, indent: int | None = 2) -> str:
+        """Render as a JSON string.
+
+        ``indent=None`` produces compact single-line JSON suitable for
+        piping; ``indent=2`` (default) is human-readable. The output
+        round-trips through :meth:`from_dict`.
+        """
+        import json
+
+        return json.dumps(self.to_dict(), indent=indent, sort_keys=False)
+
     @classmethod
     def from_yaml(cls, text: str) -> PCRProfile:
         """Parse a YAML profile document."""
@@ -193,11 +225,13 @@ _DEFAULT_INITIAL_DENATURATION = ThermalStep(95.0, 180)
 _DEFAULT_FINAL_EXTENSION = ThermalStep(72.0, 300)
 _DEFAULT_HOLD_TEMPERATURE = 4.0
 _DEFAULT_LID_TEMPERATURE = 110.0
-# Post-run hold duration emitted as a final protocol stage by
-# ``PCRProfile.to_stages_and_cycles``. 86_400 s (24 h) is a standard
-# biotech hold duration; the value is bounded by int32 max (≈68 years)
-# so it will not overflow the device's stage-duration field.
-_DEFAULT_HOLD_DURATION_SECONDS = 86_400
+# Reference post-run hold duration (24 h, a standard overnight biotech
+# hold). NOT the default for ``PCRProfile.hold_duration_s`` — the hold
+# is opt-in. Import and pass this value to ``hold_duration_s`` if you
+# want a 24 h hold; otherwise leave the default of 0 (no hold emitted).
+# The value is bounded by int32 max (≈68 years) so it will not overflow
+# the device's stage-duration field.
+_REFERENCE_HOLD_DURATION_SECONDS = 86_400
 
 
 @dataclass

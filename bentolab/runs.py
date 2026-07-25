@@ -264,6 +264,17 @@ class RunManager:
         """Return all runs in an active (non-terminal) state."""
         return [r for r in self._runs.values() if is_active(r["state"])]
 
+    def get_active_run(self) -> dict[str, Any] | None:
+        """Return the run that currently holds the device lock, or None.
+
+        Unlike :meth:`list_active_runs`, this returns at most one record
+        (the lock holder) and is O(1). Use this when you need to ask
+        "is anyone running right now, and if so who?".
+        """
+        if self._device_lock_run_id is None:
+            return None
+        return self._runs.get(self._device_lock_run_id)
+
     # ------------------------------------------------------------------
     # Result package  (C22 contract Terminal result package)
     # ------------------------------------------------------------------

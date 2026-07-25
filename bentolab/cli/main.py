@@ -22,8 +22,10 @@ from .monitor import monitor_command
 from .profile import profile_app
 from .run import run_command
 from .scan import scan_command
+from .serve import serve_app
 from .status import status_command
 from .stop import stop_command
+from .token import token_app
 
 app = typer.Typer(
     name="bentolab",
@@ -62,6 +64,8 @@ app.command("run")(run_command)
 app.command("stop")(stop_command)
 app.add_typer(profile_app, name="profile")
 app.add_typer(logs_app, name="logs")
+app.add_typer(token_app, name="token")
+app.add_typer(serve_app, name="serve")
 
 
 def main() -> None:
