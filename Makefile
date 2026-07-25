@@ -1,4 +1,4 @@
-.PHONY: help setup setup_all validate lint_fix quick_validate check_complexity check_links check_docs test test-cov scan-ble scan-wifi commander monitor-ble clean
+.PHONY: help setup setup_all validate lint_fix quick_validate check_complexity check_links check_docs test test-cov test-hardware scan-ble scan-wifi commander monitor-ble clean
 
 VENV := .venv/bin
 PYTHON := $(VENV)/python
@@ -52,6 +52,12 @@ test: ## Run test suite (excludes hardware tests)
 
 test-cov: ## Run test suite with coverage gate
 	$(VENV)/pytest tests/ -v -m "not hardware" --cov=bentolab --cov-report=term-missing --cov-fail-under=80
+
+# Hardware tests are excluded by default. Run them explicitly with:
+#   make test-hardware                          # all @pytest.mark.hardware tests
+#   BENTOLAB_SOAK_DEVICE=<addr> make test-hardware  # also set the BLE address
+test-hardware: ## Run hardware tests (requires a physical Bento Lab)
+	$(VENV)/pytest tests/ -v -m hardware
 
 # ---- Tool runners ----
 

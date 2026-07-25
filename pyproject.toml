@@ -55,7 +55,10 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-addopts = "-m \"not hardware\""
+# Note: there is intentionally NO `addopts = "-m \"not hardware\""` here.
+# The Makefile (test, test-cov) and CI (ci.yml) pass `-m "not hardware"`
+# explicitly. Without addopts, `pytest -m hardware` works as expected
+# for local hardware-test runs.
 markers = [
     "hardware: requires physical Bento Lab device",
     "slow: slow-running tests (stress, soak, multi-second)",

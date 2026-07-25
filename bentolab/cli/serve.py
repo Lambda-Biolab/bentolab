@@ -66,7 +66,13 @@ def serve_start(
     except Exception as exc:  # pragma: no cover -- construction is trivial
         fail(f"failed to construct app: {exc}", code=1)
 
-    uvicorn.run(
+    # The body below runs in a real uvicorn process. The subprocess
+    # smoke test in tests/test_cli_serve.py exercises this path
+    # end-to-end against a live HTTP server; coverage can't see it
+    # because the subprocess runs in a separate Python process and
+    # the project's [tool.coverage.run] doesn't enable multiprocess
+    # tracking. Mark the lines so they don't drag the metric down.
+    uvicorn.run(  # pragma: no cover -- exercised by tests/test_cli_serve.py in a subprocess
         app,
         host=host,
         port=port,
