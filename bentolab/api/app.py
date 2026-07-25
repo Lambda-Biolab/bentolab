@@ -131,6 +131,20 @@ class BleClientProtocol(Protocol):
         """Remove a previously-registered disconnect callback. No-op if absent."""
         ...
 
+    def on_reconnect(self, callback: Any) -> None:
+        """Register a callback fired after a successful auto-reconnect.
+
+        See :meth:`bentolab.ble_client.BentoLabBLE.on_reconnect` for
+        semantics. Implementations should fire the registered callbacks
+        from the background reconnect task as soon as the underlying
+        transport is back up.
+        """
+        ...
+
+    def off_reconnect(self, callback: Any) -> None:
+        """Remove a previously-registered reconnect callback. No-op if absent."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Profile validation helpers (constants + validate_profile live in _validation.py)
@@ -694,6 +708,28 @@ def create_app(
                 logger.warning(
                     "Auto-connect on startup failed; device endpoints will report disconnected"
                 )
+
+        # Wire the auto-reconnect notification into the SSE broker so
+        # long-lived consumers see ``event: reconnected`` when the
+        # server's background reconnect loop pulls the link back up
+        # after the 95s firmware drop (issue #55). The callback is
+        # registered exactly once at startup; it publishes to the
+        # shared EventBroker that all live SSE streams subscribe to.
+        def _on_ble_reconnect() -> None:
+            from .events import TelemetryEvent
+
+            broker: EventBroker = app.state.event_broker  # type: ignore[attr-defined]
+            address: str = str(getattr(ble_client, "_connected_address", "") or "")
+            broker.publish(
+                TelemetryEvent(
+                    kind="reconnected",
+                    data={"device": address},
+                    event_id="reconnected",
+                )
+            )
+            logger.info("Auto-reconnect succeeded; published reconnected event to SSE broker")
+
+        ble_client.on_reconnect(_on_ble_reconnect)
 
     # Bearer-token auth: install BEFORE adding CORS so the auth
     # middleware runs first (Starlette middleware is LIFO).
