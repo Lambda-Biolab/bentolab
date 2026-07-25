@@ -10,7 +10,6 @@
 - [Firmware Analysis](${BLOB}/docs/firmware-analysis.md)
 - [Wi-Fi Protocol](${BLOB}/docs/wifi-protocol.md)
 - [CLI Scripting Contract](${BLOB}/docs/cli-scripting.md)
-- [Computer Consumer Polling Contract](${BLOB}/docs/polling-contract.md)
 
 ## Source
 
