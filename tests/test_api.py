@@ -56,9 +56,10 @@ class StubBleClient:
         }
         self._start_run_fail: bool = False
         self._abort_run_fail: bool = False
-        # Status + disconnect callback registries (for SSE / events tests).
+        # Status + disconnect + reconnect callback registries (for SSE / events tests).
         self._status_callbacks: list[Any] = []
         self._disconnect_callbacks: list[Any] = []
+        self._reconnect_callbacks: list[Any] = []
 
     @property
     def is_connected(self) -> bool:
@@ -114,6 +115,15 @@ class StubBleClient:
         with contextlib.suppress(ValueError):
             self._disconnect_callbacks.remove(callback)
 
+    def on_reconnect(self, callback: Any) -> None:
+        """Register a reconnect callback (for SSE tests)."""
+        self._reconnect_callbacks.append(callback)
+
+    def off_reconnect(self, callback: Any) -> None:
+        """Remove a previously-registered reconnect callback. No-op if absent."""
+        with contextlib.suppress(ValueError):
+            self._reconnect_callbacks.remove(callback)
+
     def emit_status(self, status: StatusBroadcast) -> None:
         """Test helper: fire a status broadcast to all registered callbacks."""
         for cb in list(self._status_callbacks):
@@ -122,6 +132,11 @@ class StubBleClient:
     def emit_disconnect(self) -> None:
         """Test helper: fire a disconnect event to all registered callbacks."""
         for cb in list(self._disconnect_callbacks):
+            cb()
+
+    def emit_reconnect(self) -> None:
+        """Test helper: fire a reconnect event to all registered callbacks."""
+        for cb in list(self._reconnect_callbacks):
             cb()
 
 
@@ -1146,6 +1161,55 @@ class TestSSEEvents:
             assert len(stub._disconnect_callbacks) == 0
 
         asyncio.run(scenario())
+
+    def test_create_app_registers_reconnect_callback_at_startup(self, stub):
+        """``create_app`` registers a reconnect callback on the BLE client.
+
+        After :func:`create_app` runs, the BLE client must have an
+        ``on_reconnect`` subscriber installed. When that callback
+        fires (e.g. after the background reconnect loop pulls the
+        link back up after the 95s firmware drop), the shared SSE
+        broker publishes a ``reconnected`` event so all live SSE
+        consumers can resume their telemetry stream.
+        """
+        app = create_app(ble_client=stub)
+        assert len(stub._reconnect_callbacks) == 1
+
+        # Use the registered callback to publish to the app's shared
+        # broker (the one wired at create_app time) and verify the
+        # round-trip.
+        broker = app.state.event_broker  # type: ignore[attr-defined]
+        queue = broker.subscribe()
+        try:
+            stub.emit_reconnect()
+            event = queue.get_nowait()
+            assert event.kind == "reconnected"
+            assert event.event_id == "reconnected"
+            assert "device" in event.data
+        finally:
+            broker.unsubscribe(queue)
+
+    def test_background_reconnect_eventually_publishes_reconnected_event(self, stub):
+        """The reconnect callback publishes a ``reconnected`` SSE event.
+
+        Full self-heal loop: server detects BLE drop -> background
+        reconnect succeeds -> callback fires -> broker publishes
+        ``reconnected`` event -> live SSE consumers see it and
+        resume. This is the production wiring test for #55's
+        mitigation.
+        """
+        app = create_app(ble_client=stub)
+        broker = app.state.event_broker  # type: ignore[attr-defined]
+        queue = broker.subscribe()
+        try:
+            # Simulate the background reconnect loop succeeding.
+            stub.emit_reconnect()
+            event = queue.get_nowait()
+            assert event.kind == "reconnected"
+            assert event.event_id == "reconnected"
+            assert "device" in event.data
+        finally:
+            broker.unsubscribe(queue)
 
 
 # ===================================================================

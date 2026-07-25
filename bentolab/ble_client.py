@@ -107,9 +107,21 @@ class BentoLabBLE:
         self._rx_event = asyncio.Event()
         self._status_callbacks: list[Callable[[StatusBroadcast], Any]] = []
         self._disconnect_callbacks: list[Callable[[], Any]] = []
+        self._reconnect_callbacks: list[Callable[[], Any]] = []
         self._last_status: StatusBroadcast | None = None
         self._connected_address: str | None = None
         self._keep_alive_task: asyncio.Task[None] | None = None
+        # Background reconnect task -- started automatically when the
+        # 95s firmware drop kicks us out (issue #55). The task tries
+        # to reconnect with exponential backoff (1s, 2s, 4s, ...,
+        # 30s cap) until it succeeds or is cancelled. Only one runs
+        # at a time; a fresh drop replaces the in-flight task.
+        self._reconnect_task: asyncio.Task[None] | None = None
+        # Event loop reference, captured at connect() time. Bleak's
+        # ``disconnected_callback`` runs on its own loop/thread, so
+        # we use ``run_coroutine_threadsafe`` from that thread to
+        # schedule the reconnect task back on our asyncio loop.
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     # ------------------------------------------------------------------
     # Notification handler
@@ -136,8 +148,14 @@ class BentoLabBLE:
             self._rx_event.set()
 
     def _on_disconnect(self, _client: Any) -> None:
-        """Handle unexpected BLE disconnection."""
-        logger.warning("BLE connection lost")
+        """Handle unexpected BLE disconnection.
+
+        Fires the disconnect callbacks (so SSE consumers can emit a
+        ``disconnected`` event + retry hint) and, if ``auto_reconnect``
+        is set, schedules a background reconnect task so a long-running
+        server recovers without operator intervention.
+        """
+        logger.warning("BLE connection lost; will auto-reconnect to %s", self._connected_address)
         self._client = None
         if self._keep_alive_task is not None:
             self._keep_alive_task.cancel()
@@ -147,6 +165,36 @@ class BentoLabBLE:
                 cb()
             except Exception:
                 logger.exception("Disconnect callback error")
+
+        # Schedule the background reconnect. Bleak's disconnect callback
+        # is bridged to our asyncio loop by ``call_soon_threadsafe``
+        # (CoreBluetooth) or fires synchronously on the loop (BlueZ),
+        # so we're already on the right thread. Use ``create_task``
+        # for a real ``asyncio.Task`` we can cancel cleanly.
+        if not self.auto_reconnect:
+            return
+        if not self._connected_address or self._loop is None:
+            logger.debug(
+                "Skipping auto-reconnect: _connected_address=%s, _loop=%s",
+                self._connected_address,
+                self._loop,
+            )
+            return
+        # Replace any in-flight reconnect so we don't double up.
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+        try:
+            self._reconnect_task = self._loop.create_task(
+                self._background_reconnect(),
+                name="bentolab-auto-reconnect",
+            )
+            logger.info(
+                "Auto-reconnect scheduled after BLE drop (target=%s, attempt-budget=10)",
+                self._connected_address,
+            )
+        except RuntimeError as exc:
+            # Loop is closed (server shutting down). Nothing to do.
+            logger.debug("loop closed; cannot schedule reconnect: %s", exc)
 
     # ------------------------------------------------------------------
     # Low-level send/receive
@@ -267,6 +315,12 @@ class BentoLabBLE:
             await self._client.connect()
             await self._client.start_notify(NUS_TX_CHAR_UUID, self._on_notify)
             self._connected_address = target
+            # Capture the loop reference while we're on the asyncio
+            # thread that owns the BleakClient. bleak's
+            # ``disconnected_callback`` will fire from a different
+            # thread; the captured loop is what we need to schedule
+            # the background reconnect task.
+            self._loop = asyncio.get_running_loop()
             logger.info("Connected to %s", target)
         except BleakError as e:
             self._client = None
@@ -319,8 +373,117 @@ class BentoLabBLE:
         logger.info("Reconnecting to %s...", self._connected_address)
         await self.connect(self._connected_address)
 
+    async def _background_reconnect(self) -> None:
+        """Auto-reconnect loop with exponential backoff.
+
+        Runs in the background after an unexpected disconnect. Tries
+        :meth:`reconnect` with delays of 5s, 10s, 20s, 30s (capped).
+        Gives up after 10 consecutive failures (operator intervention
+        required). On success, fires the ``_reconnect_callbacks`` so
+        SSE consumers can publish a ``reconnected`` event.
+
+        Why start at 5s: on macOS CoreBluetooth the OS needs a beat
+        to release the previous connection slot after a drop. A
+        retry inside that window can hang the connect call. 5s is
+        enough to let the slot free in practice.
+        """
+        if not self._connected_address:
+            return
+        logger.info(
+            "Auto-reconnect starting for %s (10-attempt budget, 5s-30s backoff)",
+            self._connected_address,
+        )
+        backoff = 5.0
+        max_backoff = 30.0
+        max_attempts = 10
+        address = self._connected_address
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await asyncio.sleep(backoff)
+            except asyncio.CancelledError:
+                return
+            if not self._connected_address:
+                # Operator manually disconnected mid-reconnect; stop.
+                return
+            if await self._try_reconnect_once(attempt, max_attempts, address):
+                return
+            backoff = min(backoff * 2, max_backoff)
+        logger.error(
+            "Auto-reconnect gave up after %d attempts to %s; operator intervention required",
+            max_attempts,
+            address,
+        )
+        logger.error(
+            "Auto-reconnect gave up after %d attempts to %s; operator intervention required",
+            max_attempts,
+            address,
+        )
+
+    async def _try_reconnect_once(self, attempt: int, max_attempts: int, address: str) -> bool:
+        """One iteration of the reconnect loop. Returns True on success.
+
+        Wraps :meth:`connect` in a 20s timeout. The Bento Lab drops
+        the link every ~95s (issue #55). If the macOS CoreBluetooth
+        stack is still holding the previous connection slot, the
+        timeout kicks us out and the next backoff iteration tries
+        again. On Linux (BlueZ) the timeout is rarely needed but
+        harmless.
+        """
+        try:
+            await asyncio.wait_for(self.connect(address), timeout=20.0)
+        except TimeoutError:
+            logger.warning(
+                "Auto-reconnect attempt %d/%d to %s timed out after 20s",
+                attempt,
+                max_attempts,
+                address,
+            )
+            return False
+        except BentoLabConnectionError as exc:
+            logger.warning(
+                "Auto-reconnect attempt %d/%d to %s failed: %s",
+                attempt,
+                max_attempts,
+                address,
+                exc,
+            )
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Auto-reconnect attempt %d/%d to %s raised %s: %s",
+                attempt,
+                max_attempts,
+                address,
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        logger.info("Auto-reconnect succeeded to %s", address)
+        self._fire_reconnect_callbacks()
+        return True
+
+    def _fire_reconnect_callbacks(self) -> None:
+        """Invoke all registered reconnect callbacks. Errors are logged."""
+        for cb in self._reconnect_callbacks:
+            try:
+                cb()
+            except Exception:
+                logger.exception("Reconnect callback error")
+
     async def disconnect(self) -> None:
         """Disconnect from the device."""
+        # Operator-initiated disconnect: stop any in-flight auto-reconnect
+        # and clear the address so a fresh drop can't sneak back in.
+        if self._reconnect_task is not None:
+            # concurrent.futures.Future.cancel() is synchronous; the
+            # coroutine running on the asyncio loop will see CancelledError
+            # on its next checkpoint. We don't await the future here
+            # because it isn't directly awaitable in this form; the
+            # background task checks for the cancel via its own sleep().
+            self._reconnect_task.cancel()
+            self._reconnect_task = None
         if self._keep_alive_task is not None:
             self._keep_alive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -331,6 +494,12 @@ class BentoLabBLE:
                 await self._client.stop_notify(NUS_TX_CHAR_UUID)
             await self._client.disconnect()
         self._client = None
+        self._loop = None
+        # Note: we intentionally do NOT clear ``_connected_address``
+        # here. ``reconnect()`` (and the background reconnect loop)
+        # use it as the target. ``disconnect()`` is paired with the
+        # operator intending to be done; clearing the address would
+        # also break callers that explicitly reconnect later.
         logger.info("Disconnected")
 
     @property
@@ -384,6 +553,21 @@ class BentoLabBLE:
         """Remove a previously-registered disconnect callback. No-op if absent."""
         with contextlib.suppress(ValueError):
             self._disconnect_callbacks.remove(callback)
+
+    def on_reconnect(self, callback: Callable[[], Any]) -> None:
+        """Register a callback fired after a successful auto-reconnect.
+
+        The callback is invoked from the background reconnect task as
+        soon as :meth:`connect` returns successfully. Useful for SSE
+        consumers that want to broadcast a ``reconnected`` event so
+        long-lived clients can resume the telemetry stream.
+        """
+        self._reconnect_callbacks.append(callback)
+
+    def off_reconnect(self, callback: Callable[[], Any]) -> None:
+        """Remove a previously-registered reconnect callback. No-op if absent."""
+        with contextlib.suppress(ValueError):
+            self._reconnect_callbacks.remove(callback)
 
     # ------------------------------------------------------------------
     # Profile management
