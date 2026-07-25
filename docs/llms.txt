@@ -10,6 +10,7 @@
 - [Firmware Analysis](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/firmware-analysis.md)
 - [Wi-Fi Protocol](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/wifi-protocol.md)
 - [CLI Scripting Contract](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/cli-scripting.md)
+- [Computer Consumer Polling Contract](https://github.com/Lambda-Biolab/bentolab/blob/main/docs/polling-contract.md)
 
 ## Source
 
