@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -25,6 +26,9 @@ from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
+
+# ANSI escape sequence regex, used by tests that inspect Click/Rich output.
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOST = "127.0.0.1"
@@ -172,10 +176,7 @@ def test_serve_start_help_succeeds_without_booting_uvicorn() -> None:
 
     # Strip ANSI escape codes for substring matching; Click/Rich emit
     # colour codes that would make literal searches flaky.
-    import re
-
-    ansi_re = re.compile(r"\x1b\[[0-9;]*m")
-    plain = ansi_re.sub("", result.output)
+    plain = _ANSI_ESCAPE_RE.sub("", result.output)
 
     assert result.exit_code == 0, result.output
     assert "Usage:" in plain, plain
