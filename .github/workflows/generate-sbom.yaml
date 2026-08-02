@@ -1,6 +1,6 @@
 name: Generate SBOM
 
-on:
+"on":
   # Weekly only. The previous version fired on every push to main,
   # which produced 15+ stale SBOM PRs in two days (each one a +1/-1
   # timestamp-only diff). Manual trigger via the Actions tab still
