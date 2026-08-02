@@ -35,7 +35,10 @@ jobs:
         run: uv run ruff check bentolab/ tests/ tools/
 
       - name: Type check
-        run: uv run pyright bentolab/
+        # Tests are first-class code — caught here so the gate stays
+        # in sync with the opencode-config standard. [tool.pyright].include
+        # in pyproject.toml already includes "tests".
+        run: uv run pyright bentolab/ tests/
 
       - name: Test
         run: uv run pytest tests/ -v -m "not hardware"

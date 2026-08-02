@@ -25,7 +25,7 @@ setup_all: ## Install ALL optional dependency groups (dev, tools, api)
 validate: ## Full read-only validation (format, lint, types, complexity, tests, coverage)
 	$(VENV)/ruff format --check $(SRC)
 	$(VENV)/ruff check $(SRC)
-	$(VENV)/pyright bentolab/
+	$(VENV)/pyright bentolab/ tests/
 	$(VENV)/complexipy bentolab/ --max-complexity-allowed 15
 	$(VENV)/pytest tests/ -v -m "not hardware"
 
@@ -36,7 +36,7 @@ lint_fix: ## Auto-fix lint and format issues
 quick_validate: ## Quick check: ruff + pyright (skip tests)
 	$(VENV)/ruff format --check $(SRC)
 	$(VENV)/ruff check $(SRC)
-	$(VENV)/pyright bentolab/
+	$(VENV)/pyright bentolab/ tests/
 
 check_complexity: ## Run complexipy analysis
 	$(VENV)/complexipy bentolab/ --max-complexity-allowed 15

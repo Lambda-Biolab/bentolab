@@ -123,7 +123,9 @@ def test_force_release_lock_releases_without_changing_state() -> None:
     assert mgr.is_locked is False
     # The run record is still in ACCEPTED -- operator is expected to
     # transition it explicitly afterwards.
-    assert mgr.get_run(run_id)["state"] == RunLifecycle.ACCEPTED
+    run = mgr.get_run(run_id)
+    assert run is not None
+    assert run["state"] == RunLifecycle.ACCEPTED
 
 
 # ---------------------------------------------------------------------------
@@ -205,4 +207,6 @@ def test_run_manager_accepts_string_lifecycle() -> None:
     mgr = RunManager()
     run_id = mgr.create_run(profile=_profile_dict())
     assert mgr.transition_to(run_id, "running") is True
-    assert mgr.get_run(run_id)["state"] == RunLifecycle.RUNNING
+    run = mgr.get_run(run_id)
+    assert run is not None
+    assert run["state"] == RunLifecycle.RUNNING

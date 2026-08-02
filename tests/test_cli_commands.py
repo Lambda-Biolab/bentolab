@@ -41,7 +41,7 @@ def runner() -> CliRunner:
 
 
 def _stub_status(running: bool = False, block: float = 25.0, lid: float = 24.0) -> StatusBroadcast:
-    return StatusBroadcast(0, 0, 0, 0, block, lid, int(running))
+    return StatusBroadcast(0, 0, 0, 0, int(block), int(lid), int(running))
 
 
 def _make_fake_instance(**methods: Any) -> MagicMock:
@@ -127,8 +127,9 @@ def test_status_json_outputs_snapshot(
     assert r.exit_code == 0, r.stdout
     payload = json.loads(r.stdout.splitlines()[-1])
     assert int(payload["running"]) == 0  # idle
-    assert payload["block_temperature"] == 30.5
-    assert payload["lid_temperature"] == 29.0
+    # StatusBroadcast fields are typed as int; values are cast on construction.
+    assert payload["block_temperature"] == 30
+    assert payload["lid_temperature"] == 29
     assert payload["address"] == "AA:BB:CC:DD:EE:FF"
 
 
@@ -143,8 +144,9 @@ def test_status_human_readable_output(
     )
     r = runner.invoke(app, ["status"])
     assert r.exit_code == 0, r.stdout
-    assert "block=30.5" in r.stdout
-    assert "lid=29.0" in r.stdout
+    # StatusBroadcast fields are typed as int; values are cast on construction.
+    assert "block=30°C" in r.stdout
+    assert "lid=29°C" in r.stdout
 
 
 # ---------------------------------------------------------------------------

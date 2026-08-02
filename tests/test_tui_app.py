@@ -92,7 +92,7 @@ async def test_orphan_attach_message_does_not_crash_app() -> None:
     app = BentoLabApp(show_splash=False)
     async with app.run_test() as pilot:
         # Idle state with no orphan in flight: must not raise.
-        status = StatusBroadcast(0, 0, 0, 0, 25.0, 110.0, 0)
+        status = StatusBroadcast(0, 0, 0, 0, 25, 110, 0)
         app.post_message(StatusUpdated(status=status))
         await pilot.pause()
         # When nothing matches, the pane stays detached.
