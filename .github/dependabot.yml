@@ -34,3 +34,9 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # Note on pre-commit-hooks and conventional-pre-commit rev pins
+  # in .pre-commit-config.yaml: Dependabot does not have a native
+  # `pre-commit` package-ecosystem. Bump them manually with
+  #   uv run pre-commit autoupdate
+  # and verify the new hooks pass before merging.
