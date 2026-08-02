@@ -46,14 +46,16 @@ repos:
     hooks:
       - id: pyright
         name: pyright (bentolab/ only)
-        entry: uv run pyright bentolab/
+        entry: |
+          bash -c 'export PATH=\"\$HOME/.local/bin:\$PATH\"; uv run pyright bentolab/'
         language: system
         pass_filenames: false
         types: [python]
 
       - id: complexipy
         name: complexipy (cognitive complexity <=15)
-        entry: uv run complexipy bentolab/ --max-complexity-allowed 15
+        entry: |
+          bash -c 'export PATH=\"\$HOME/.local/bin:\$PATH\"; uv run complexipy bentolab/ --max-complexity-allowed 15'
         language: system
         pass_filenames: false
         types: [python]
