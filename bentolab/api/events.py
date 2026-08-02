@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -165,7 +165,7 @@ async def stream_events(
     poll_interval: float = _DEFAULT_POLL_INTERVAL_S,
     keepalive_interval: float = _KEEPALIVE_INTERVAL_S,
     retry_after_ms: int = 1000,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     """Yield SSE-formatted text for as long as the client stays connected.
 
     Sets up broker subscription, BLE status callback, and a BLE

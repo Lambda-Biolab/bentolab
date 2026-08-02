@@ -65,7 +65,7 @@ def test_no_args_without_tui_exits_1_with_hint(runner: CliRunner) -> None:
     """When ``bentolab.tui`` can't be imported, exits 1 with the install hint."""
     # Force the import to fail by registering a sentinel that's not the real module.
     real = sys.modules.pop("bentolab.tui", None)
-    sys.modules["bentolab.tui"] = None  # sentinel -> ImportError when accessed
+    sys.modules["bentolab.tui"] = None  # type: ignore[arg-type]  # sentinel -> ImportError when accessed
     try:
         result = runner.invoke(app, [])
         assert result.exit_code == 1
