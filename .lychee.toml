@@ -15,4 +15,8 @@ exclude = [
     # automated link checkers. The legal reference is intentional
     # in docs/LICENSING_ASSESSMENT.md.
     "^https://eur-lex\\.europa\\.eu",
+    # bento.bio (Bento Bioworks) blocks HEAD/curl requests with a
+    # 403 (Cloudflare WAF). The URL is real and used in the vendor
+    # attribution in docs/LICENSING_ASSESSMENT.md.
+    "^https://bento\\.bio",
 ]
