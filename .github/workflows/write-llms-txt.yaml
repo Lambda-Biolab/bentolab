@@ -1,6 +1,6 @@
 name: Write repo llms.txt
 
-on:
+"on":
   push:
     branches: [main]
     paths:

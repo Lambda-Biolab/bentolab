@@ -1,4 +1,3 @@
----
 # https://github.blog/changelog/2025-10-28-upcoming-deprecation-of-codeql-action-v3/
 # Modern CodeQL config:
 # - No `pull_request:` trigger: under PR runs, codeql-action uploads SARIFs
@@ -14,7 +13,7 @@
 #   on PR.
 name: "CodeQL"
 
-on:
+"on":
   push:
   schedule:
     - cron: "27 11 * * 0"
