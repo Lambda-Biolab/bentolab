@@ -155,3 +155,5 @@ Not affiliated with, endorsed by, or sponsored by Bento Bioworks Ltd.
 repository was determined through interoperability analysis of BLE
 communication with devices owned by the author, consistent with DMCA §1201(f)
 (US) and Article 6 of the EU Software Directive 2009/24/EC.
+
+<!-- last re-gitleaks trigger: Mon Aug  3 05:13:06 AM CEST 2026 -->
