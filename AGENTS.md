@@ -79,9 +79,9 @@ adapter can be slotted in without an API break.
 
 ```bash
 make validate        # Full check: format, lint, types, complexity, tests
-make lint_fix        # Auto-fix lint + format
+make lint            # Auto-fix lint + format
 make quick_validate  # Ruff + pyright only (skip tests)
-make check_complexity # complexipy analysis
+make complexity      # complexipy analysis
 make test            # pytest -m "not hardware"
 ```
 
