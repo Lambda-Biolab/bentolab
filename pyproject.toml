@@ -51,6 +51,7 @@ dev = [
     "aiohttp>=3.14.3",
     "requests>=2.31",  # lab-copilot-gateway HttpBentoLabClient
     "pytest-cov>=5.0",  # coverage gate (make test-cov)
+    "bandit>=1.9.4",
 ]
 
 [tool.pytest.ini_options]
@@ -123,3 +124,14 @@ include = ["bentolab*"]
 
 [tool.setuptools.package-data]
 "bentolab.tui" = ["style.tcss", "ascii-art/*.txt"]
+
+# --- Mutation testing (mutmut) ---
+# Mutation testing is local-only (pre-push hook via make mutate-changed).
+# See CONTRIBUTING.md "Mutation Testing" section for the architecture.
+# The source_paths and pytest_add_cli_args_test_selection lists are
+# what  mutates. Adding new modules here is the
+# only required setup; the Makefile target auto-detects changed files.
+[tool.mutmut]
+source_path = ["bentolab"]
+pytest_add_cli_args = ["--no-cov", "--tb=short", "-q"]
+pytest_add_cli_args_test_selection = ["tests"]
