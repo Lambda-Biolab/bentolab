@@ -88,10 +88,8 @@ enforced by `make validate` are non-negotiable. When a gate fires:
 ## Development Setup
 
 ```bash
-make setup           # Create venv + install dev + tools deps
-make setup_all       # Also install [api] extras (FastAPI, uvicorn)
-make validate        # Verify everything passes (incl. tests)
-make quick_validate  # Skip tests
-make test            # Test suite only (excludes hardware)
-make test-cov        # Test suite + coverage gate (>= 80%)
+make setup_dev         # Create venv + install dev + tools deps
+make validate          # Verify everything passes (incl. tests)
+make quick_validate    # Skip tests
+make test              # Test suite only (excludes hardware)
 ```

@@ -4,7 +4,6 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/Lambda-Biolab/bentolab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Lambda-Biolab/bentolab/actions/workflows/ci.yml)
 [![Dependabot Updates](https://github.com/Lambda-Biolab/bentolab/actions/workflows/dependabot/dependabot-updates/badge.svg?branch=main)](https://github.com/Lambda-Biolab/bentolab/actions/workflows/dependabot/dependabot-updates)
-[![CodeQL](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/Lambda-Biolab/bentolab/actions/workflows/codeql.yml)
 [![CodeFactor](https://www.codefactor.io/repository/github/lambda-biolab/bentolab/badge/main)](https://www.codefactor.io/repository/github/lambda-biolab/bentolab)
 
 > **Unofficial.** This is a community-maintained library. It is not
@@ -30,7 +29,7 @@ Service protocol, reverse-engineered from the official Bento Bio app.
 
 ```bash
 # One-command setup (requires uv)
-make setup
+make setup_dev
 
 # Or manually:
 uv venv --python 3.13
