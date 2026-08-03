@@ -34,5 +34,3 @@ apk_decompiled/
 .vscode/
 *.swp
 *.swo
-.coverage
-.opencode/
