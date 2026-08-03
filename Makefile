@@ -197,6 +197,7 @@ mutate:
 _mutate-prepare:
 	@mkdir -p mutants
 	@rm -rf mutants/$(SRC)
+	@mkdir -p $$(dirname mutants/$(SRC))
 	@cp -r $(SRC) mutants/$(SRC)
 	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 
