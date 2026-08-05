@@ -38,16 +38,17 @@ acting as a virtual serial port. The MCU is a **Nordic nRF** chip (confirmed by 
 
 ## Protocol Architecture
 
-```
+```text
 App (Flutter)                      Device (Nordic nRF MCU)
     |                                    |
     |-- Write to NUS RX (0x6e400002) --> |  processBluetoothCommand()
     |                                    |
     | <-- Notify on NUS TX (0x6e400003)  |  processBluetoothMessage()
     |                                    |
-```
+```text
 
 The app uses `flutter_blue_plus` for BLE communication. Key Dart methods:
+
 - `processBluetoothCommand` — sends commands to device
 - `processBluetoothMessage` — handles responses from device
 - `sendPcrProfileToRun` — sends PCR profile and starts run
@@ -56,6 +57,7 @@ The app uses `flutter_blue_plus` for BLE communication. Key Dart methods:
 ## PCR Profile Wire Format (Hypothesis)
 
 Based on error messages in the Dart binary:
+
 1. Profile transfer starts with a `pcrProfileBegin` command
 2. Stage/cycle data is sent via `addLoadingData` commands
 3. Profile transfer ends with a `pcrProfileDone` command
@@ -64,6 +66,7 @@ Based on error messages in the Dart binary:
 ## Custom UUIDs Analysis
 
 All Bento UUIDs share the base: `6e40xxxx-b5a3-f393-e0a9-e50e24dcca9e`
+
 - `0001-0003`: Standard Nordic UART Service
 - `9a18-9a19`: Bento-specific extensions (may carry real-time telemetry)
 

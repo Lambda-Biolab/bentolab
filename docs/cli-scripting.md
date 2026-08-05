@@ -75,6 +75,7 @@ one JSON document per progress event on stdout.
 - **Exit 2** — profile not found.
 - **Exit 3** — BLE connect or start-run command failed.
 - **JSON event shape** (streaming):
+
   ```json
   {"running": true, "progress": 42, "block": 72.5, "lid": 109.8, "elapsed": 1830}
   ```
@@ -87,6 +88,7 @@ Ctrl-C or `--duration` elapses.
 - **Exit 0** — clean shutdown (Ctrl-C or duration reached).
 - **Exit 3** — BLE connect failed.
 - **JSON event shapes** (streaming, two `kind`s):
+
   ```json
   {"kind": "status", "running": true, "block": 72.5, "lid": 109.8}
   {"kind": "run", "running": true, "progress": 42}
@@ -160,7 +162,7 @@ if [ -z "$ADDR" ]; then
   exit 1
 fi
 bentolab status --device "$ADDR" --json
-```
+```text
 
 ### Start a run, then poll once per minute until it terminates
 
@@ -176,7 +178,7 @@ while true; do
   esac
   sleep 60
 done
-```
+```text
 
 ### Catch a specific exit code
 
@@ -187,7 +189,7 @@ case $? in
   3) echo "device problem — check BLE" >&2 ;;
   *) echo "unexpected" >&2 ;;
 esac
-```
+```text
 
 ## Stability
 

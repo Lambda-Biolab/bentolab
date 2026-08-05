@@ -12,10 +12,10 @@ firmware and BLE captures that were committed then removed from the working tree
 Reverse engineering of BLE protocols for interoperability is protected under:
 
 - **US:** DMCA §1201(f) interoperability exception
-  — https://www.law.cornell.edu/uscode/text/17/1201
+  — <https://www.law.cornell.edu/uscode/text/17/1201>
 - **EU:** Software Directive 2009/24/EC, Article 6 (decompilation for
   interoperability)
-  — https://eur-lex.europa.eu/eli/dir/2009/24/oj
+  — <https://eur-lex.europa.eu/eli/dir/2009/24/oj>
 
 BLE traffic observation from an owned device is analogous to network traffic
 analysis — no access controls are circumvented.
@@ -29,10 +29,10 @@ analysis — no access controls are circumvented.
    - `firmware/bg-p000-1.zip` — Nordic DFU firmware package (Bento Bioworks copyright)
    - `captures/sessions/*.jsonl` — raw BLE session logs
    - `captures/ble/protocol_transcript.json`
-   
+
    Use `git filter-repo` or BFG Repo-Cleaner:
-   — https://github.com/newren/git-filter-repo
-   — https://rtyley.github.io/bfg-repo-cleaner/
+   — <https://github.com/newren/git-filter-repo>
+   — <https://rtyley.github.io/bfg-repo-cleaner/>
 
 2. ~~**Add a LICENSE file** — currently missing entirely. Recommended: MIT or
    Apache-2.0 for library code.~~ **DONE.** Apache License 2.0 with a `NOTICE`
@@ -43,12 +43,12 @@ analysis — no access controls are circumvented.
 
 ### Recommended
 
-3. **Soften RE provenance language** in docs — replace "APK decompilation"
+1. **Soften RE provenance language** in docs — replace "APK decompilation"
    and "libapp.so string extraction" with "protocol analysis" or "black-box
    observation." The code is clean, but explicit decompilation references
    increase scrutiny.
 
-4. **Add disclaimer to README:**
+2. **Add disclaimer to README:**
    > Not affiliated with Bento Bioworks Ltd. Bento Lab is a trademark of
    > Bento Bioworks. Protocol information was determined through
    > interoperability analysis of BLE communication.
@@ -63,6 +63,6 @@ analysis — no access controls are circumvented.
 
 ## References
 
-- Bento Bioworks (vendor): https://bento.bio
-- Bluetooth SIG assigned numbers: https://www.bluetooth.com/specifications/assigned-numbers/
-- git-filter-repo: https://github.com/newren/git-filter-repo
+- Bento Bioworks (vendor): <https://bento.bio>
+- Bluetooth SIG assigned numbers: <https://www.bluetooth.com/specifications/assigned-numbers/>
+- git-filter-repo: <https://github.com/newren/git-filter-repo>

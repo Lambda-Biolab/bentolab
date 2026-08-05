@@ -6,6 +6,7 @@
 ## Architecture Overview
 
 Communication uses **Nordic UART Service (NUS)** as a virtual serial port:
+
 - App writes commands to NUS RX (`6e400002-...`)
 - Device sends responses via NUS TX notifications (`6e400003-...`)
 - Protocol appears to be **text-based** (serial-style commands, not binary opcodes)
@@ -15,6 +16,7 @@ Communication uses **Nordic UART Service (NUS)** as a virtual serial port:
 
 Commands are sent as text strings over BLE NUS. The firmware parses them via `handle_command()`
 using a state machine with states like:
+
 - `CMDHANDLER_SET_PROFILE_EXPECT_ID`
 - `CMDHANDLER_SET_PROFILE_EXPECT_SET_NAME_ID`
 - `CMDHANDLER_SET_PROFILE_EXPECT_STAGE_TYPE`
@@ -70,7 +72,7 @@ The PCR profile is parsed via `fromSerial` (firmware log: `PCR program fromSeria
 
 Profile data is serialized as text and parsed by `PCR program fromSerial: %s`.
 
-```
+```text
 Profile fields:
   profileId     — integer ID
   name          — string, parsed by "getting name in fromSerial: %s"
@@ -85,11 +87,11 @@ Stage:
   duration      — integer (seconds)
   touchDownDelta    — optional: %s%d.%02d
   touchDownRepeats  — optional: integer
-```
+```text
 
 ### Data Model Hierarchy (from Dart classes)
 
-```
+```text
 PcrProgram (JSON serializable)
   ├── name: String
   ├── profileId: int
@@ -104,34 +106,36 @@ PcrProgram (JSON serializable)
         ├── temperature: double (Celsius)
         ├── duration: int (seconds)
         └── touchdownDelta: double (optional, for touchdown PCR)
-```
+```text
 
 ### Firmware Limits
 
 ```c
 PCR_MAX_CYCLENODES  // Maximum number of cycles per profile
 PCR_MAX_STAGENODES  // Maximum number of stages per profile
-```
+```text
 
 ## Temperature Encoding
 
 Temperatures are encoded as signed fixed-point: `%s%d.%02d`
+
 - `%s` = sign ("" or "-")
 - `%d` = integer degrees
 - `.%02d` = centidegrees (hundredths)
 - Example: `95.00` = 95.00°C, `-4.50` = -4.50°C
 
 Firmware uses PID control with logging:
-```
+
+```text
 PERFORMANCE: target: %.2f, Overshoot: %.2f, Slowdown time: %lu ms,
              Hold variance: %.4f, lidTemp: %.2f, lidVoltage: %d
-```
+```text
 
 ## Lid Temperature Control States
 
-```
+```text
 LID_MODE_HEATUP -> LID_MODE_MAINTAIN_APPROACHING -> LID_MODE_MAINTAIN
-```
+```text
 
 Error: `LID_TEMP_ERROR_HEATING` if temperature too low after 20 seconds.
 
@@ -168,7 +172,7 @@ Error: `LID_TEMP_ERROR_HEATING` if temperature too low after 20 seconds.
 
 ## Device State Machine
 
-```
+```text
 IDLE
   ├── sendPcrProfileToRun -> HEATING (lid heats first)
   │     ├── LID_MODE_HEATUP -> LID_MODE_MAINTAIN_APPROACHING -> LID_MODE_MAINTAIN
@@ -181,7 +185,7 @@ IDLE
   │           └── Complete all cycles -> COMPLETE -> IDLE
   ├── updateCentMode -> CENTRIFUGE_RUNNING
   └── updateGelMode -> GEL_RUNNING (transilluminator on)
-```
+```text
 
 ## Next Steps
 

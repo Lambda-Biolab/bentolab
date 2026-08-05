@@ -10,7 +10,7 @@ fix: handle chunked NUS TX responses
 docs: update protocol command reference
 test: add profile upload round-trip test
 chore: bump ruff to 0.5
-```
+```text
 
 ## Pre-Commit Checklist
 
@@ -18,7 +18,7 @@ Before opening a PR, run:
 
 ```bash
 make validate
-```
+```text
 
 This runs format check, lint, type check, complexity analysis, and the full
 test suite (excluding hardware tests).
@@ -92,4 +92,4 @@ make setup_dev         # Create venv + install dev + tools deps
 make validate          # Verify everything passes (incl. tests)
 make quick_validate    # Skip tests
 make test              # Test suite only (excludes hardware)
-```
+```text

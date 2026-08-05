@@ -7,6 +7,7 @@
 ## Binary Format
 
 Nordic DFU package (ZIP) containing:
+
 - `nrf52840_xxaa.bin` — Application firmware (123KB)
 - `nrf52840_xxaa.dat` — DFU init packet (142 bytes, contains signature + metadata)
 - `manifest.json` — DFU manifest
@@ -27,10 +28,11 @@ Nordic DFU package (ZIP) containing:
 ## Memory Layout
 
 Vector table at 0x00000000 (standard Cortex-M):
-```
+
+```text
 0x00000000: Initial SP  = 0x20040000 (top of 256KB RAM)
 0x00000004: Reset vector = 0x000272BD
-```
+```text
 
 ## Hardware Peripherals (from firmware strings)
 
@@ -66,7 +68,7 @@ Vector table at 0x00000000 (standard Cortex-M):
 
 ## Interesting Strings
 
-```
+```text
 Bento Bioworks Ltd              — Manufacturer name (BLE Device Info)
 Bento goPCR                     — Device name base
 Bento goPCR %02X%02X            — Device name with MAC suffix
@@ -74,7 +76,7 @@ bento-pcr                       — Internal identifier
 App Version 0.5.4               — Compiled with app version reference
 sizeof(pcr_profile_t)=%d        — Profile struct size logged at runtime
 unchunked_extended_messages: %d  — BLE message chunking support
-```
+```text
 
 ## Notes
 

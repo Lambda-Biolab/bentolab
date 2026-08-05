@@ -34,6 +34,7 @@ No other ports open across the entire TCP range (1-65535).
 ## Port 9000 Analysis
 
 The OTA receiver on port 9000:
+
 - Accepts TCP connections silently
 - Does **not** respond to any commands (text or binary)
 - Does **not** send status broadcasts
@@ -70,6 +71,7 @@ The device downloads firmware **directly from the internet**, not through the ap
 ### Firmware URL enumeration
 
 Over 200 filename patterns were tested against the firmware server:
+
 - `bl-*.zip/bin`, `bl-p00X-X.zip`, `bl-1.3.17.4.*`
 - Version-based, hardware-based, and generic patterns
 - All returned 404 — the exact filename is unknown
