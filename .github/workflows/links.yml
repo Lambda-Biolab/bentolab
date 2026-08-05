@@ -20,4 +20,4 @@ on:
 
 jobs:
   check-links:
-    uses: Lambda-Biolab/.github-private/.github/workflows/links.yml@d82b41c33d124b96cf20cf998c6c9c673e15b40e
+    uses: Lambda-Biolab/.github-private/.github/workflows/links.yml@b063c56
