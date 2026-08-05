@@ -24,7 +24,7 @@ state until the link is back.
 ```text
 GET /events HTTP/1.1
 Accept: text/event-stream
-```
+```text
 
 The server emits Server-Sent Events for as long as the client stays
 connected. Five event families:
@@ -64,7 +64,7 @@ t=100+ε : Server publishes event: reconnected to the broker
 t=100+ε : Live SSE consumers see event: reconnected
 t=101   : event: status (fresh)
 ... (telemetry resumes)
-```
+```text
 
 The gap between t=96 and t=100+ε is the price the client pays for
 the firmware's hard link lifetime. Operators see a brief telemetry
@@ -94,7 +94,7 @@ A reference implementation in Python is at
 
 ```text
 GET /status
-```
+```text
 
 ```json
 {
@@ -102,7 +102,7 @@ GET /status
   "block_temperature": 27,
   "lid_temperature": 28
 }
-```
+```text
 
 Always returns 200, even when the BLE link is down (state will be
 `disconnected`). Use this for one-shot health checks or for
@@ -112,7 +112,7 @@ non-streaming clients that can't hold a long-lived SSE connection.
 
 ```text
 GET /runs/{id}?wait=30
-```
+```text
 
 Blocks for up to 30 seconds waiting for the run's state to change.
 Returns the current `RunStatusDetail` as soon as it does. Returns the
@@ -127,7 +127,7 @@ POST /runs                  # Start a new run
 POST /runs/{id}/abort       # Abort a running run
 GET /runs/{id}/results      # Final temperature log + lifecycle
 GET /runs                   # List all known runs
-```
+```text
 
 All return `application/json`. See [`docs/cli-scripting.md`](cli-scripting.md)
 for the C22 contract these implement.

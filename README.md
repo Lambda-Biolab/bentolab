@@ -32,7 +32,7 @@ make setup_dev
 # Or manually:
 uv venv --python 3.13
 uv pip install -r requirements.txt
-```
+```text
 
 ## Library Usage
 
@@ -66,7 +66,7 @@ async def main():
     async for state in lab.run_profile(custom):
         print(f"{state.state.value}  block={state.block_temperature}C  "
               f"progress={state.progress}%")
-```
+```text
 
 ## Command-line interface
 
@@ -85,7 +85,7 @@ bentolab run my-profile                 # uploads + starts + tails until done
 bentolab stop                           # abort the current run
 bentolab logs list
 bentolab logs show <run-id>
-```
+```text
 
 Profile YAML:
 
@@ -101,7 +101,7 @@ cycles:
 final_extension:  { temperature: 72, duration: 300 }
 hold_temperature: 4
 notes: ""
-```
+```text
 
 Every subcommand accepts `--json` for machine-readable output. Exit codes:
 `0` ok, `2` user error, `3` device error, `4` aborted.
@@ -131,7 +131,7 @@ python tools/ble_scanner.py --connect --device-name "Bento"
 
 # Interactive exploration
 python tools/ble_commander.py
-```
+```text
 
 ## Documentation
 

@@ -28,7 +28,7 @@ bentolab/
 tools/               # Standalone debug scripts (scanner, commander, monitor)
 tests/               # pytest + pytest-asyncio, all mocked (no hardware)
 docs/                # Protocol RE findings (GATT profile, commands, firmware)
-```
+```text
 
 Two transport adapters exist on paper (`ble_client.BentoLabBLE` and
 `wifi_client.BentoLabWiFi`) but only BLE has a real protocol. The Wi-Fi
@@ -83,7 +83,7 @@ make lint            # Auto-fix lint + format
 make quick_validate  # Ruff + pyright only (skip tests)
 make complexity      # complexipy analysis
 make test            # pytest -m "not hardware"
-```
+```text
 
 Hardware tests (`@pytest.mark.hardware`) are excluded from CI.
 Run with `pytest -m hardware` when a Bento Lab is physically connected.

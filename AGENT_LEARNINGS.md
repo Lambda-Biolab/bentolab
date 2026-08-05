@@ -106,6 +106,7 @@ that runs against the real device. The fix is to refactor, not just
 drop the budget.
 
 **Pattern**:
+
 1. **One PR per file**, not one giant refactor. Each PR is small
    enough to review in one sitting; git history shows the per-file
    win clearly.
@@ -196,4 +197,3 @@ sending a cheap command on a timer (PR #18 uses `Xa` handshake every
 for debugging). The keep-alive must NOT swallow send errors — a
 firmware that ignores a handshake is still better off than one where
 the keep-alive hangs the whole client.
-
