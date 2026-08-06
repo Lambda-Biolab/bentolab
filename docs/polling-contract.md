@@ -15,7 +15,7 @@ for the firmware's hard ~90s connection lifetime (issue #55).
 | Run lifecycle | `POST /runs` / `POST /runs/{id}/abort` / `GET /runs/{id}/results` | request/response |
 
 If the BLE link drops (the Bento firmware disconnects every ~95s —
-see [issue #55](https://github.com/Lambda-Biolab/bentolab/issues/55)),
+see issue #55 (firmware ~95s BLE lifetime; not documented externally)),
 the SSE stream self-heals; the other transports serve a degraded
 state until the link is back.
 
