@@ -14,7 +14,7 @@ silently never returns a match.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ... import devices as device_registry
 from ..._logging import SessionLogger
@@ -41,7 +41,7 @@ class Session:
     :class:`ConnectionChanged` whenever the link state flips.
     """
 
-    def __init__(self, app: App) -> None:
+    def __init__(self, app: App[Any]) -> None:
         self.app = app
         self.lab: BentoLabBLE | None = None
         self.address: str | None = None
@@ -121,7 +121,7 @@ class Session:
                 self.app.post_message(RunProgressed(state=state))
             success = True
         finally:
-            if self._run_log is not None:
+            if self._run_log is not None:  # pyright: ignore[reportUnnecessaryComparison]
                 self._run_log.event("run_finished", {"success": success})
                 self._run_log.close()
                 self._run_log = None

@@ -103,7 +103,7 @@ class BentoLabBLE:
         # timer keeps the connection up. Set 0 to disable.
         self.keep_alive_seconds = keep_alive_seconds
         self._client: BleakClient | None = None
-        self._rx_buffer: list[dict] = []
+        self._rx_buffer: list[dict[str, Any]] = []
         self._rx_event = asyncio.Event()
         self._status_callbacks: list[Callable[[StatusBroadcast], Any]] = []
         self._disconnect_callbacks: list[Callable[[], Any]] = []
@@ -253,7 +253,7 @@ class BentoLabBLE:
 
     async def _collect_responses(
         self, timeout: float = 3.0, expected_end: str | None = None
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Collect responses until timeout or expected end marker."""
         self._rx_buffer.clear()
         self._rx_event.clear()
@@ -523,7 +523,11 @@ class BentoLabBLE:
         old_status = self._last_status
 
         def on_status(s: StatusBroadcast) -> None:
-            if s is not old_status:
+            # _last_status was None at function entry (line 520 returned
+            # any truthy previous status), so any broadcast counts as a
+            # change. The original "if s is not old_status" guard would
+            # always be True here since old_status is None.
+            if s != old_status:  # pyright: ignore[reportUnnecessaryComparison]
                 event.set()
 
         self._status_callbacks.append(on_status)

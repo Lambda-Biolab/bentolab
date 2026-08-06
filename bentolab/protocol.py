@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # BLE GATT UUIDs
@@ -302,7 +303,7 @@ class RunStatus:
         )
 
 
-def decode_response(data: bytes) -> dict:  # noqa: C901
+def decode_response(data: bytes) -> dict[str, Any]:  # noqa: C901
     """Decode a NUS TX notification into a structured dict.
 
     Returns dict with 'type' key and parsed fields.

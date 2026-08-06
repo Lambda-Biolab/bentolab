@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..._data_dirs import runs_dir
 
@@ -55,14 +56,14 @@ def _iter_rows(path: Path):
             continue
 
 
-def _extract_header(rows: list[dict], *, fallback: str) -> tuple[str, str]:
+def _extract_header(rows: list[dict[str, Any]], *, fallback: str) -> tuple[str, str]:
     for entry in rows:
         if entry.get("type") == "session_start":
             return entry.get("start_time", ""), entry.get("session", fallback)
     return "", fallback
 
 
-def _classify(rows: list[dict]) -> str:
+def _classify(rows: list[dict[str, Any]]) -> str:
     last_event = ""
     success = False
     for entry in rows:

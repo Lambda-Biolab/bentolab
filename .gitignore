@@ -34,3 +34,5 @@ apk_decompiled/
 .vscode/
 *.swp
 *.swo
+.coverage
+mutants/

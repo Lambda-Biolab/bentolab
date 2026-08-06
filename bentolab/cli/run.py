@@ -9,6 +9,7 @@ import typer
 from .. import profiles as profile_store
 from .._logging import SessionLogger
 from ..ble_client import BentoLabBLE
+from ..models import PCRProfile
 from ._device import resolve_address
 from ._format import emit_json, fail, stdout
 
@@ -36,7 +37,11 @@ def run_command(
 
 
 async def _run(
-    profile, lid_temp: float, address: str | None, no_tail: bool, json_output: bool
+    profile: PCRProfile,
+    lid_temp: float,
+    address: str | None,
+    no_tail: bool,
+    json_output: bool,
 ) -> None:
     lab = BentoLabBLE(address=address) if address else BentoLabBLE()
     with SessionLogger(profile.name) as log:

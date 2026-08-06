@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Any
 
 import typer
 
@@ -47,10 +48,10 @@ def scan_command(
         stdout.print(f"  {entry['address']}  {entry['name']}{rssi}")
 
 
-async def _scan(timeout: float) -> list[dict]:
+async def _scan(timeout: float) -> list[dict[str, Any]]:
     lab = BentoLabBLE()
     discovered = await lab.discover(timeout=timeout)
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for dev, adv in discovered:
         out.append(
             {

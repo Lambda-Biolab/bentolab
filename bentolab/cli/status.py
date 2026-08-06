@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import typer
 
@@ -35,7 +36,7 @@ def status_command(
     )
 
 
-async def _snapshot(address: str | None) -> dict:
+async def _snapshot(address: str | None) -> dict[str, Any]:
     lab = BentoLabBLE(address=address) if address else BentoLabBLE()
     async with lab:
         s: StatusBroadcast = await lab.get_status()

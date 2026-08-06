@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -146,18 +147,18 @@ class StubBleClient:
 
 
 @pytest.fixture
-def stub():
+def stub() -> StubBleClient:
     return StubBleClient()
 
 
 @pytest.fixture
-def client(stub):
+def client(stub: StubBleClient) -> TestClient:
     app = create_app(ble_client=stub)
     return TestClient(app)
 
 
 @pytest.fixture
-def client_no_hw():
+def client_no_hw() -> TestClient:
     """App with no BLE client at all -- tests degraded paths."""
     app = create_app(ble_client=None)
     return TestClient(app)
@@ -213,7 +214,7 @@ def _dry_run_body(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 class TestHealth:
-    def test_health_returns_ok_with_ble(self, client):
+    def test_health_returns_ok_with_ble(self, client: TestClient):
         resp = client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -222,14 +223,14 @@ class TestHealth:
         assert data["wifi"] == "not_supported"
         assert "version" in data
 
-    def test_health_returns_not_available_without_ble(self, client_no_hw):
+    def test_health_returns_not_available_without_ble(self, client_no_hw: TestClient):
         resp = client_no_hw.get("/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
         assert data["ble"] == "not_available"
 
-    def test_health_version_matches_library(self, client):
+    def test_health_version_matches_library(self, client: TestClient):
         from bentolab import __version__
 
         resp = client.get("/health")
@@ -242,7 +243,7 @@ class TestHealth:
 
 
 class TestDevices:
-    def test_devices_empty_when_none_discovered(self, client, stub):
+    def test_devices_empty_when_none_discovered(self, client: TestClient, stub: StubBleClient):
         stub._devices = []
         resp = client.get("/devices")
         assert resp.status_code == 200
@@ -250,7 +251,7 @@ class TestDevices:
         assert data["devices"] == []
         assert stub.discover_called
 
-    def test_devices_returns_discovered(self, client, stub):
+    def test_devices_returns_discovered(self, client: TestClient, stub: StubBleClient):
         stub._devices = [
             (_StubDevice("AA:BB:CC:DD:EE:01", "Bento Lab A"), None),
             (_StubDevice("AA:BB:CC:DD:EE:02", "Bento Lab B"), None),
@@ -264,14 +265,16 @@ class TestDevices:
         assert data["devices"][0]["transport"] == "ble"
         assert data["devices"][1]["address"] == "AA:BB:CC:DD:EE:02"
 
-    def test_devices_empty_when_no_ble_client(self, client_no_hw):
+    def test_devices_empty_when_no_ble_client(self, client_no_hw: TestClient):
         resp = client_no_hw.get("/devices")
         assert resp.status_code == 200
         data = resp.json()
         assert data["devices"] == []
 
-    def test_devices_handles_discover_exception(self, client, stub, monkeypatch):
-        async def failing_discover(**kwargs):
+    def test_devices_handles_discover_exception(
+        self, client: TestClient, stub: StubBleClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        async def failing_discover(**kwargs: Any):
             raise RuntimeError("BLE adapter unavailable")
 
         monkeypatch.setattr(stub, "discover", failing_discover)
@@ -286,7 +289,9 @@ class TestDevices:
 
 
 class TestStatus:
-    def test_status_idle_when_connected_and_not_running(self, client, stub):
+    def test_status_idle_when_connected_and_not_running(
+        self, client: TestClient, stub: StubBleClient
+    ):
         stub._status = StatusBroadcast(0, 0, 0, 0, 25, 24, 0)
         resp = client.get("/status")
         assert resp.status_code == 200
@@ -297,7 +302,7 @@ class TestStatus:
         assert data["run"] is None
         assert stub.get_status_called
 
-    def test_status_running_when_device_busy(self, client, stub):
+    def test_status_running_when_device_busy(self, client: TestClient, stub: StubBleClient):
         stub._status = StatusBroadcast(1, 0, 0, 0, 95, 110, 0)
         resp = client.get("/status")
         assert resp.status_code == 200
@@ -306,18 +311,20 @@ class TestStatus:
         assert data["run"]["running"] is True
         assert data["temperature"]["block"] == 95.0
 
-    def test_status_disconnected_when_not_connected(self, client, stub):
+    def test_status_disconnected_when_not_connected(self, client: TestClient, stub: StubBleClient):
         stub._connected = False
         resp = client.get("/status")
         assert resp.status_code == 200
         assert resp.json()["state"] == "disconnected"
 
-    def test_status_disconnected_when_no_ble_client(self, client_no_hw):
+    def test_status_disconnected_when_no_ble_client(self, client_no_hw: TestClient):
         resp = client_no_hw.get("/status")
         assert resp.status_code == 200
         assert resp.json()["state"] == "disconnected"
 
-    def test_status_returns_error_on_exception(self, client, stub, monkeypatch):
+    def test_status_returns_error_on_exception(
+        self, client: TestClient, stub: StubBleClient, monkeypatch: pytest.MonkeyPatch
+    ):
         async def failing_status():
             raise RuntimeError("BLE read failed")
 
@@ -337,7 +344,7 @@ class TestStatus:
 
 
 class TestProfileValidate:
-    def test_valid_profile_returns_ok(self, client):
+    def test_valid_profile_returns_ok(self, client: TestClient):
         body = {
             "profile": {
                 "name": "Test PCR",
@@ -361,7 +368,7 @@ class TestProfileValidate:
         assert data["ok"] is True
         assert data["errors"] == []
 
-    def test_invalid_lid_temperature(self, client):
+    def test_invalid_lid_temperature(self, client: TestClient):
         body = {
             "profile": {
                 "name": "Hot lid",
@@ -377,7 +384,7 @@ class TestProfileValidate:
         assert data["ok"] is False
         assert any("Lid temperature" in e for e in data["errors"])
 
-    def test_invalid_step_temperature(self, client):
+    def test_invalid_step_temperature(self, client: TestClient):
         body = {
             "profile": {
                 "name": "Too hot",
@@ -393,7 +400,7 @@ class TestProfileValidate:
         assert data["ok"] is False
         assert any("initial_denaturation" in e for e in data["errors"])
 
-    def test_invalid_duration(self, client):
+    def test_invalid_duration(self, client: TestClient):
         body = {
             "profile": {
                 "name": "Negative duration",
@@ -409,7 +416,7 @@ class TestProfileValidate:
         assert data["ok"] is False
         assert any("duration" in e for e in data["errors"])
 
-    def test_invalid_cycle_count(self, client):
+    def test_invalid_cycle_count(self, client: TestClient):
         body = {
             "profile": {
                 "name": "Zero cycles",
@@ -432,7 +439,7 @@ class TestProfileValidate:
         assert data["ok"] is False
         assert any("repeat_count" in e for e in data["errors"])
 
-    def test_missing_required_field(self, client):
+    def test_missing_required_field(self, client: TestClient):
         body = {"profile": {}}
         resp = client.post("/profiles/validate", json=body)
         assert resp.status_code == 200
@@ -440,11 +447,11 @@ class TestProfileValidate:
         assert data["ok"] is False
         assert any("name" in e for e in data["errors"])
 
-    def test_missing_body_field_is_422(self, client):
+    def test_missing_body_field_is_422(self, client: TestClient):
         resp = client.post("/profiles/validate", json={})
         assert resp.status_code == 422
 
-    def test_warns_for_no_cycles(self, client):
+    def test_warns_for_no_cycles(self, client: TestClient):
         body = {
             "profile": {
                 "name": "No cycles",
@@ -467,7 +474,7 @@ class TestProfileValidate:
 
 
 class TestDryRun:
-    def test_dry_run_valid_profile(self, client):
+    def test_dry_run_valid_profile(self, client: TestClient):
         resp = client.post("/runs/dry-run", json=_dry_run_body())
         assert resp.status_code == 200
         data = resp.json()
@@ -478,7 +485,7 @@ class TestDryRun:
         # Standard PCR: 1 init denat + 30 cycles * 3 steps + 1 final ext
         assert len(sim["steps"]) == 1 + 30 * 3 + 1
 
-    def test_dry_run_invalid_profile_returns_errors(self, client):
+    def test_dry_run_invalid_profile_returns_errors(self, client: TestClient):
         body = _dry_run_body()
         body["profile"] = {
             "name": "Bad",
@@ -493,14 +500,14 @@ class TestDryRun:
         assert data["ok"] is False
         assert len(data["errors"]) > 0
 
-    def test_dry_run_empty_profile(self, client):
+    def test_dry_run_empty_profile(self, client: TestClient):
         resp = client.post("/runs/dry-run", json={"profile": {}})
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is False
         assert any("name" in e for e in data["errors"])
 
-    def test_dry_run_422_on_missing_body(self, client):
+    def test_dry_run_422_on_missing_body(self, client: TestClient):
         resp = client.post("/runs/dry-run", json={})
         assert resp.status_code == 422
 
@@ -511,7 +518,7 @@ class TestDryRun:
 
 
 class TestStartRun:
-    def test_start_run_success(self, client, stub):
+    def test_start_run_success(self, client: TestClient, stub: StubBleClient):
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 200
         data = resp.json()
@@ -521,7 +528,7 @@ class TestStartRun:
         assert data["started_at"] is not None
         assert stub.start_run_called
 
-    def test_start_run_no_approval_rejected(self, client):
+    def test_start_run_no_approval_rejected(self, client: TestClient):
         body = _run_body({"approval_id": None})
         resp = client.post("/runs", json=body)
         assert resp.status_code == 400
@@ -529,27 +536,27 @@ class TestStartRun:
         # FastAPI returns detail as dict when raised via HTTPException
         assert "approval_required" in str(data)
 
-    def test_start_run_no_ble_client_rejected(self, client_no_hw):
+    def test_start_run_no_ble_client_rejected(self, client_no_hw: TestClient):
         resp = client_no_hw.post("/runs", json=_run_body())
         assert resp.status_code == 400
         data = resp.json()
         assert "preflight_failed" in str(data)
 
-    def test_start_run_device_not_connected_rejected(self, client, stub):
+    def test_start_run_device_not_connected_rejected(self, client: TestClient, stub: StubBleClient):
         stub._connected = False
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 400
         data = resp.json()
         assert "preflight_failed" in str(data)
 
-    def test_start_run_device_busy_rejected(self, client, stub):
+    def test_start_run_device_busy_rejected(self, client: TestClient, stub: StubBleClient):
         stub._status = StatusBroadcast(1, 0, 0, 0, 95, 110, 0)
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 400
         data = resp.json()
         assert "preflight_failed" in str(data)
 
-    def test_start_run_invalid_profile_rejected(self, client):
+    def test_start_run_invalid_profile_rejected(self, client: TestClient):
         body = _run_body()
         body["profile"] = {
             "name": "Bad",
@@ -561,20 +568,22 @@ class TestStartRun:
         resp = client.post("/runs", json=body)
         assert resp.status_code == 400
 
-    def test_start_run_hardware_failure_returns_500(self, client, stub):
+    def test_start_run_hardware_failure_returns_500(self, client: TestClient, stub: StubBleClient):
         stub._start_run_fail = True
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 500
         data = resp.json()
         assert "run_start_failed" in str(data)
 
-    def test_start_run_calls_ble_start_run(self, client, stub):
+    def test_start_run_calls_ble_start_run(self, client: TestClient, stub: StubBleClient):
         client.post("/runs", json=_run_body())
         assert stub.start_run_called
         assert stub._started_profile is not None
         assert stub._started_profile.name == "Standard PCR"
 
-    def test_start_run_idempotent_returns_existing_run(self, client, stub):
+    def test_start_run_idempotent_returns_existing_run(
+        self, client: TestClient, stub: StubBleClient
+    ):
         """Second POST /runs with the same profile + device returns the existing run.
 
         Idempotency contract: the elabFTW gateway can safely retry a
@@ -598,7 +607,9 @@ class TestStartRun:
         assert body2["was_already_running"] is True
         assert stub.start_run_called is False
 
-    def test_start_run_different_profile_on_locked_device_still_rejected(self, client, stub):
+    def test_start_run_different_profile_on_locked_device_still_rejected(
+        self, client: TestClient, stub: StubBleClient
+    ):
         """Idempotency does NOT apply when the profile or device differs.
 
         Only same-profile-on-same-device retries return the existing
@@ -625,7 +636,7 @@ class TestStartRun:
 
 
 class TestGetRunStatus:
-    def test_get_run_status_returns_state(self, client):
+    def test_get_run_status_returns_state(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -635,17 +646,17 @@ class TestGetRunStatus:
         assert data["run_id"] == run_id
         assert data["state"] == "running"
 
-    def test_get_run_status_not_found(self, client):
+    def test_get_run_status_not_found(self, client: TestClient):
         resp = client.get("/runs/nonexistent-id")
         assert resp.status_code == 404
 
-    def test_get_run_status_after_completion(self, client):
+    def test_get_run_status_after_completion(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
         from bentolab.runs import RunLifecycle
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         resp = client.get(f"/runs/{run_id}")
@@ -660,7 +671,7 @@ class TestGetRunStatus:
 
 
 class TestAbortRun:
-    def test_abort_running_run(self, client, stub):
+    def test_abort_running_run(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -672,7 +683,7 @@ class TestAbortRun:
         assert data["aborted_at"] is not None
         assert stub.abort_run_called
 
-    def test_abort_idempotent_on_terminal(self, client, stub):
+    def test_abort_idempotent_on_terminal(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -686,11 +697,11 @@ class TestAbortRun:
         assert resp2.status_code == 200
         assert resp2.json()["ok"] is True
 
-    def test_abort_not_found(self, client):
+    def test_abort_not_found(self, client: TestClient):
         resp = client.post("/runs/nonexistent-id/abort")
         assert resp.status_code == 404
 
-    def test_abort_after_disconnect_marks_review(self, client, stub):
+    def test_abort_after_disconnect_marks_review(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -702,7 +713,7 @@ class TestAbortRun:
         data = resp.json()
         assert data["state"] == "unknown_requires_operator_review"
 
-    def test_abort_releases_lock(self, client, stub):
+    def test_abort_releases_lock(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -721,13 +732,13 @@ class TestAbortRun:
 
 
 class TestRunResults:
-    def test_get_results_on_completed_run(self, client):
+    def test_get_results_on_completed_run(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
         from bentolab.runs import RunLifecycle
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         resp = client.get(f"/runs/{run_id}/results")
@@ -739,7 +750,7 @@ class TestRunResults:
         assert data["started_at"] is not None
         assert data["completed_at"] is not None
 
-    def test_get_results_on_aborted_run(self, client, stub):
+    def test_get_results_on_aborted_run(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -751,7 +762,7 @@ class TestRunResults:
         assert data["state"] == "aborted"
         assert data["aborted_at"] is not None
 
-    def test_get_results_on_review_run(self, client, stub):
+    def test_get_results_on_review_run(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -765,11 +776,11 @@ class TestRunResults:
         assert data["state"] == "unknown_requires_operator_review"
         assert len(data["errors"]) > 0
 
-    def test_get_results_not_found(self, client):
+    def test_get_results_not_found(self, client: TestClient):
         resp = client.get("/runs/nonexistent-id/results")
         assert resp.status_code == 404
 
-    def test_get_results_on_running_run(self, client, stub):
+    def test_get_results_on_running_run(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -786,18 +797,18 @@ class TestRunResults:
 
 
 class TestPreflight:
-    def test_preflight_fails_without_ble(self, client_no_hw):
+    def test_preflight_fails_without_ble(self, client_no_hw: TestClient):
         resp = client_no_hw.post("/runs", json=_run_body())
         assert resp.status_code == 400
         assert "preflight_failed" in str(resp.json())
 
-    def test_preflight_fails_when_disconnected(self, client, stub):
+    def test_preflight_fails_when_disconnected(self, client: TestClient, stub: StubBleClient):
         stub._connected = False
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 400
         assert "preflight_failed" in str(resp.json())
 
-    def test_preflight_fails_on_invalid_profile(self, client):
+    def test_preflight_fails_on_invalid_profile(self, client: TestClient):
         body = _run_body()
         body["profile"] = {
             "name": "Hot lid",
@@ -810,7 +821,9 @@ class TestPreflight:
         # Preflight includes profile validation, so invalid lid temp fails
         assert resp.status_code == 400
 
-    def test_preflight_fails_on_locked_device_with_different_profile(self, client, stub):
+    def test_preflight_fails_on_locked_device_with_different_profile(
+        self, client: TestClient, stub: StubBleClient
+    ):
         """A run with a different profile on a locked device still fails preflight.
 
         Idempotency only returns the existing run when the profile name
@@ -837,36 +850,36 @@ class TestPreflight:
 
 
 class TestDeviceLock:
-    def test_lock_prevents_concurrent_runs(self, client, stub):
+    def test_lock_prevents_concurrent_runs(self, client: TestClient, stub: StubBleClient):
         client.post("/runs", json=_run_body())
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         assert run_mgr.is_locked
 
-    def test_lock_released_on_completion(self, client):
+    def test_lock_released_on_completion(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
         from bentolab.runs import RunLifecycle
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         run_mgr.transition_to(run_id, RunLifecycle.COMPLETED)
 
         assert not run_mgr.is_locked
 
-    def test_lock_released_on_abort(self, client, stub):
+    def test_lock_released_on_abort(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
         client.post(f"/runs/{run_id}/abort")
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         assert not run_mgr.is_locked
 
-    def test_force_release_lock(self, client, stub):
+    def test_force_release_lock(self, client: TestClient, stub: StubBleClient):
         client.post("/runs", json=_run_body())
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         released = run_mgr.force_release_lock()
         assert released is not None
         assert not run_mgr.is_locked
@@ -883,14 +896,14 @@ class TestDeviceLock:
 
 
 class TestAmbiguousFailure:
-    def test_unknown_review_is_terminal(self, client, stub):
+    def test_unknown_review_is_terminal(self, client: TestClient, stub: StubBleClient):
         """After unknown_requires_operator_review, no further transitions."""
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
         from bentolab.runs import RunLifecycle
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         # Transition to review
         run_mgr.transition_to(run_id, RunLifecycle.UNKNOWN_REVIEW)
         # Try to transition back -- should fail
@@ -899,7 +912,7 @@ class TestAmbiguousFailure:
         # Lock is released
         assert not run_mgr.is_locked
 
-    def test_no_auto_repeat_after_abort_disconnect(self, client, stub):
+    def test_no_auto_repeat_after_abort_disconnect(self, client: TestClient, stub: StubBleClient):
         """Abort-after-disconnect -> review state, not a repeated run."""
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
@@ -913,13 +926,13 @@ class TestAmbiguousFailure:
         results = client.get(f"/runs/{run_id}/results")
         assert results.json()["state"] == "unknown_requires_operator_review"
 
-    def test_failed_start_does_not_lock_device(self, client, stub):
+    def test_failed_start_does_not_lock_device(self, client: TestClient, stub: StubBleClient):
         """A run that fails during hardware start releases the lock."""
         stub._start_run_fail = True
         resp = client.post("/runs", json=_run_body())
         assert resp.status_code == 500
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         assert not run_mgr.is_locked
 
 
@@ -929,11 +942,11 @@ class TestAmbiguousFailure:
 
 
 class TestWritebackPath:
-    def test_run_record_has_writeback_state(self, client, stub):
+    def test_run_record_has_writeback_state(self, client: TestClient, stub: StubBleClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
-        run_mgr = client.app.state.run_manager
+        run_mgr = client.app.state.run_manager  # type: ignore[reportFunctionMemberAccess]
         run = run_mgr.get_run(run_id)
         assert run["writeback_state"] == "pending"
 
@@ -946,7 +959,7 @@ class TestWritebackPath:
 class TestLongPolling:
     """GET /runs/{id}?wait=N blocks until the run reaches a terminal state."""
 
-    def test_wait_zero_returns_immediately(self, client):
+    def test_wait_zero_returns_immediately(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -955,7 +968,7 @@ class TestLongPolling:
         assert resp.status_code == 200
         assert resp.json()["state"] == "running"
 
-    def test_wait_blocks_until_terminal(self, client):
+    def test_wait_blocks_until_terminal(self, client: TestClient):
         from bentolab.runs import RunLifecycle
 
         create_resp = client.post("/runs", json=_run_body())
@@ -969,7 +982,7 @@ class TestLongPolling:
 
         def complete_after_delay() -> None:
             _time.sleep(0.3)
-            client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)
+            client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)  # type: ignore[reportFunctionMemberAccess]
 
         threading.Thread(target=complete_after_delay, daemon=True).start()
 
@@ -985,7 +998,7 @@ class TestLongPolling:
         # And didn't wait the full 5s budget
         assert elapsed < 4.0
 
-    def test_wait_returns_on_timeout_if_still_running(self, client):
+    def test_wait_returns_on_timeout_if_still_running(self, client: TestClient):
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
 
@@ -1002,19 +1015,19 @@ class TestLongPolling:
         # Polled roughly on the 0.5s cadence; allow generous tolerance
         assert 0.5 <= elapsed < 2.0
 
-    def test_wait_terminal_returns_immediately(self, client):
+    def test_wait_terminal_returns_immediately(self, client: TestClient):
         from bentolab.runs import RunLifecycle
 
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
-        client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)
+        client.app.state.run_manager.transition_to(run_id, RunLifecycle.COMPLETED)  # type: ignore[reportFunctionMemberAccess]
 
         # Terminal state -> no waiting, return immediately
         resp = client.get(f"/runs/{run_id}?wait=5")
         assert resp.status_code == 200
         assert resp.json()["state"] == "completed"
 
-    def test_wait_caps_at_60_seconds(self, client):
+    def test_wait_caps_at_60_seconds(self, client: TestClient):
         """wait param validation: values > 60 are rejected by FastAPI."""
         create_resp = client.post("/runs", json=_run_body())
         run_id = create_resp.json()["run_id"]
@@ -1036,7 +1049,7 @@ class TestSSEEvents:
     never resolve (SSE streams are intentionally infinite).
     """
 
-    def test_broker_publishes_to_subscribers(self, stub):
+    def test_broker_publishes_to_subscribers(self, stub: StubBleClient):
         """The EventBroker fans out events to all current subscribers."""
         import asyncio
 
@@ -1084,7 +1097,7 @@ class TestSSEEvents:
 
         asyncio.run(scenario())
 
-    def test_stream_events_yields_connected_event(self, stub):
+    def test_stream_events_yields_connected_event(self, stub: StubBleClient):
         """The first event from stream_events is the ``connected`` marker."""
         import asyncio
 
@@ -1102,7 +1115,7 @@ class TestSSEEvents:
 
         asyncio.run(scenario())
 
-    def test_stream_events_attaches_and_detaches_status_callback(self, stub):
+    def test_stream_events_attaches_and_detaches_status_callback(self, stub: StubBleClient):
         """stream_events registers and cleans up the on_status callback."""
         import asyncio
 
@@ -1123,7 +1136,7 @@ class TestSSEEvents:
 
         asyncio.run(scenario())
 
-    def test_stream_events_emits_retry_hint_on_ble_disconnect(self, stub):
+    def test_stream_events_emits_retry_hint_on_ble_disconnect(self, stub: StubBleClient):
         """When the BLE link drops, the stream emits a retry hint and closes.
 
         Regression for the Bento Lab firmware's hard ~90s connection
@@ -1162,7 +1175,7 @@ class TestSSEEvents:
 
         asyncio.run(scenario())
 
-    def test_create_app_registers_reconnect_callback_at_startup(self, stub):
+    def test_create_app_registers_reconnect_callback_at_startup(self, stub: StubBleClient):
         """``create_app`` registers a reconnect callback on the BLE client.
 
         After :func:`create_app` runs, the BLE client must have an
@@ -1189,7 +1202,7 @@ class TestSSEEvents:
         finally:
             broker.unsubscribe(queue)
 
-    def test_background_reconnect_eventually_publishes_reconnected_event(self, stub):
+    def test_background_reconnect_eventually_publishes_reconnected_event(self, stub: StubBleClient):
         """The reconnect callback publishes a ``reconnected`` SSE event.
 
         Full self-heal loop: server detects BLE drop -> background
@@ -1220,7 +1233,7 @@ class TestSSEEvents:
 class TestApiAuth:
     """Bearer token middleware: open mode without tokens, required with tokens."""
 
-    def test_open_mode_allows_anonymous_when_no_tokens(self, client):
+    def test_open_mode_allows_anonymous_when_no_tokens(self, client: TestClient):
         """No tokens registered -> request goes through unauthenticated."""
         resp = client.get("/health")
         assert resp.status_code == 200
@@ -1228,7 +1241,9 @@ class TestApiAuth:
         resp = client.get("/devices")
         assert resp.status_code == 200
 
-    def test_protected_endpoint_rejects_without_token_when_tokens_exist(self, tmp_path, stub):
+    def test_protected_endpoint_rejects_without_token_when_tokens_exist(
+        self, tmp_path: Path, stub: StubBleClient
+    ):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1245,7 +1260,7 @@ class TestApiAuth:
         assert resp.status_code == 401
         assert "Missing" in str(resp.json()) or "Bearer" in str(resp.json())
 
-    def test_protected_endpoint_accepts_valid_token(self, tmp_path, stub):
+    def test_protected_endpoint_accepts_valid_token(self, tmp_path: Path, stub: StubBleClient):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1258,7 +1273,7 @@ class TestApiAuth:
         resp = c.get("/devices", headers={"Authorization": f"Bearer {tok.token}"})
         assert resp.status_code == 200
 
-    def test_protected_endpoint_rejects_invalid_token(self, tmp_path, stub):
+    def test_protected_endpoint_rejects_invalid_token(self, tmp_path: Path, stub: StubBleClient):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1271,7 +1286,7 @@ class TestApiAuth:
         resp = c.get("/devices", headers={"Authorization": "Bearer not-a-real-token"})
         assert resp.status_code == 401
 
-    def test_health_is_always_exempt(self, tmp_path, stub):
+    def test_health_is_always_exempt(self, tmp_path: Path, stub: StubBleClient):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1285,7 +1300,7 @@ class TestApiAuth:
         resp = c.get("/health")
         assert resp.status_code == 200
 
-    def test_openapi_is_always_exempt(self, tmp_path, stub):
+    def test_openapi_is_always_exempt(self, tmp_path: Path, stub: StubBleClient):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1298,7 +1313,7 @@ class TestApiAuth:
         resp = c.get("/openapi.json")
         assert resp.status_code == 200
 
-    def test_force_auth_blocks_when_no_tokens(self, tmp_path, stub):
+    def test_force_auth_blocks_when_no_tokens(self, tmp_path: Path, stub: StubBleClient):
         """BENTOLAB_REQUIRE_AUTH=1 forces auth even with zero tokens."""
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
@@ -1312,7 +1327,7 @@ class TestApiAuth:
         resp = c.get("/devices")
         assert resp.status_code == 401
 
-    def test_valid_token_updates_last_used(self, tmp_path, stub):
+    def test_valid_token_updates_last_used(self, tmp_path: Path, stub: StubBleClient):
         from bentolab.api.app import create_app
         from bentolab.api.auth import TokenStore
 
@@ -1328,7 +1343,7 @@ class TestApiAuth:
         assert refreshed is not None
         assert refreshed.last_used_at is not None
 
-    def test_token_store_persists_across_instances(self, tmp_path):
+    def test_token_store_persists_across_instances(self, tmp_path: Path):
         from bentolab.api.auth import TokenStore
 
         path = tmp_path / "tokens.json"
@@ -1341,13 +1356,13 @@ class TestApiAuth:
         assert loaded[0].token == tok.token
         assert loaded[0].device_address == "AA:BB:CC:DD:EE:FF"
 
-    def test_revoke_unknown_token_returns_false(self, tmp_path):
+    def test_revoke_unknown_token_returns_false(self, tmp_path: Path):
         from bentolab.api.auth import TokenStore
 
         store = TokenStore(path=tmp_path / "tokens.json")
         assert store.revoke("never-issued") is False
 
-    def test_revoke_issued_token_succeeds(self, tmp_path):
+    def test_revoke_issued_token_succeeds(self, tmp_path: Path):
         from bentolab.api.auth import TokenStore
 
         store = TokenStore(path=tmp_path / "tokens.json")

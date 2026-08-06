@@ -9,7 +9,7 @@ import sys
 import typer
 
 from ..ble_client import BentoLabBLE, BentoLabCommandError
-from ..protocol import StatusBroadcast
+from ..protocol import RunStatus, StatusBroadcast
 from ._device import resolve_address
 from ._format import emit_json, fail, stdout
 
@@ -47,7 +47,7 @@ def _print_status(s: StatusBroadcast, json_output: bool) -> None:
         )
 
 
-def _print_run(rs, json_output: bool) -> None:
+def _print_run(rs: RunStatus, json_output: bool) -> None:
     if json_output:
         emit_json({"kind": "run", "running": rs.running, "progress": rs.progress})
         sys.stdout.flush()

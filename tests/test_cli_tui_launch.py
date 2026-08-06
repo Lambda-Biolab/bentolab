@@ -10,6 +10,7 @@ Verifies:
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -46,7 +47,7 @@ def test_no_args_with_tui_launches_workbench(
     inside the callback; we patch ``bentolab.tui.run`` via the
     subpackage's module attrs.
     """
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
     def fake_run() -> None:
         captured["called"] = True

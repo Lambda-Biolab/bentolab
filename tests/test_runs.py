@@ -13,6 +13,8 @@ Behavioral invariants tested:
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from bentolab.runs import (
@@ -26,7 +28,7 @@ from bentolab.runs import (
 )
 
 
-def _profile_dict() -> dict:
+def _profile_dict() -> dict[str, Any]:
     return {
         "name": "test",
         "initial_denaturation": {"temperature": 95, "duration": 180},

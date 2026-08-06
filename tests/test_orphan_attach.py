@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from bentolab.models import CycleStep, PCRProfile, ThermalStep
 from bentolab.tui.services.orphan_attach import find_active_run
@@ -26,7 +27,7 @@ def _profile() -> PCRProfile:
     )
 
 
-def _write(path: Path, rows: list[dict]) -> None:
+def _write(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 
