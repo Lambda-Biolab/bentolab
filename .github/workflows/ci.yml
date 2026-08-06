@@ -96,7 +96,48 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  sbom:
+    name: Generate SBOM
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Install Syft
+        env:
+          SYFT_VERSION: "1.50.0"
+          SYFT_SHA256: "bf7b29ff57f06da30918266a0e1c2885a8f99784798d1bdb1628886aa015d788"
+        run: |
+          set -euo pipefail
+          URL="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          TMP=$(mktemp -d)
+          trap 'rm -rf "$TMP"' EXIT
+          curl -sSL --fail "$URL" -o "$TMP/syft.tar.gz"
+          echo "$SYFT_SHA256  $TMP/syft.tar.gz" | sha256sum -c -
+          tar -xzf "$TMP/syft.tar.gz" -C "$TMP"
+          sudo mv "$TMP/syft" /usr/local/bin/syft
+          sudo chmod +x /usr/local/bin/syft
+          syft version
+
+      - name: Generate SBOM
+        env:
+          SBOM_PATH: docs/SBOM/syft-scan.spdx.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SBOM_PATH")"
+          syft scan dir:.             --output "spdx-json=$SBOM_PATH"             --source-name "${{ github.repository }}"             --source-version "${{ github.sha }}"
+          echo "SBOM written to $SBOM_PATH"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@4cec0d85b66861bfb2afcae7b8b8e90241a86271 # v4
+        with:
+          name: sbom
+          path: docs/SBOM/syft-scan.spdx.json
+          if-no-files-found: error
+          retention-days: 90
   links:
     name: Link Checker
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
