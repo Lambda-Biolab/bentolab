@@ -16,6 +16,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from ..._data_dirs import runs_dir
 from ...models import PCRProfile
@@ -91,12 +92,12 @@ def _try_parse(path: Path, *, cutoff: datetime, now: datetime) -> ActiveRun | No
     return ActiveRun(profile=profile, started_at=started, log_path=path)
 
 
-def _read_rows(path: Path) -> list[dict] | None:
+def _read_rows(path: Path) -> list[dict[str, Any]] | None:
     try:
         raw_lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         return None
-    rows: list[dict] = []
+    rows: list[dict[str, Any]] = []
     for raw in raw_lines:
         if not raw.strip():
             continue
@@ -107,9 +108,9 @@ def _read_rows(path: Path) -> list[dict] | None:
     return rows
 
 
-def _summarize_rows(rows: list[dict]) -> dict:
+def _summarize_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     started: datetime | None = None
-    profile_dict: dict | None = None
+    profile_dict: dict[str, Any] | None = None
     last_event = ""
     last_type = ""
     saw_run_started = False

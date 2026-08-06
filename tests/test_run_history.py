@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from bentolab.tui.services.run_history import load_history
 
 
-def _write_ndjson(path: Path, rows: list[dict]) -> None:
+def _write_ndjson(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
 
 

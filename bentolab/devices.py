@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ._data_dirs import devices_path
 from ._store import atomic_write_text, load_with_backup
@@ -21,7 +22,7 @@ class Device:
     last_seen: str = ""  # ISO-8601 UTC
 
 
-def _load_raw(path: Path | None = None) -> dict[str, dict]:
+def _load_raw(path: Path | None = None) -> dict[str, dict[str, Any]]:
     target = path or devices_path()
     data, _source = load_with_backup(target)
     if not data:

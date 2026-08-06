@@ -11,13 +11,16 @@ real in-flight run from a stub log left by a failed connect.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from textual.message import Message
 
 from bentolab.models import PCRProfile
+from bentolab.protocol import StatusBroadcast
 from bentolab.runs import RunLifecycle, RunState
 from bentolab.tui.messages import (
     ConnectionChanged,
@@ -40,8 +43,8 @@ class _StubLab:
         self.disconnect_called = False
         self.stop_run_called = False
         self.run_profile_called_with: tuple[PCRProfile, float] | None = None
-        self._status_callbacks: list = []
-        self._disconnect_callbacks: list = []
+        self._status_callbacks: list[Any] = []
+        self._disconnect_callbacks: list[Any] = []
 
     def is_connected(self) -> bool:
         return True
@@ -59,10 +62,10 @@ class _StubLab:
     async def stop_run(self) -> None:
         self.stop_run_called = True
 
-    def on_status(self, callback) -> None:
+    def on_status(self, callback: Callable[[StatusBroadcast], None]) -> None:
         self._status_callbacks.append(callback)
 
-    def on_disconnect(self, callback) -> None:
+    def on_disconnect(self, callback: Callable[[], None]) -> None:
         self._disconnect_callbacks.append(callback)
 
     def run_profile(
@@ -74,7 +77,7 @@ class _StubLab:
         self.run_profile_called_with = (profile, lid_temp)
         return self._aiter(self._states)
 
-    async def _aiter(self, items: list):
+    async def _aiter(self, items: list[Any]):
         for it in items:
             yield it
 
@@ -83,9 +86,9 @@ class _CollectingApp:
     """Stand-in for a Textual App; records all posted messages."""
 
     def __init__(self) -> None:
-        self.messages: list = []
+        self.messages: list[Any] = []
 
-    def post_message(self, msg) -> None:
+    def post_message(self, msg: Message) -> None:
         self.messages.append(msg)
 
 
@@ -193,7 +196,12 @@ async def test_run_profile_records_run_finished_with_success_false(
 
     # Stub that raises immediately, simulating a mid-run BLE drop.
     class _RaisesLab(_StubLab):
-        def run_profile(self, profile, lid_temp=110.0, poll_interval=5.0):
+        def run_profile(
+            self,
+            profile: PCRProfile,
+            lid_temp: float = 110.0,
+            poll_interval: float = 5.0,
+        ):
             raise RuntimeError("BLE dropped")
 
     app = _CollectingApp()

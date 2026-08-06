@@ -15,7 +15,9 @@ from typing import TYPE_CHECKING
 import typer
 
 if TYPE_CHECKING:
-    from bentolab.tui import run as run_tui_typed  # noqa: F401
+    from bentolab.tui import (
+        run as run_tui_typed,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    )
 
 from .logs import logs_app
 from .monitor import monitor_command
@@ -38,7 +40,7 @@ app = typer.Typer(
 
 
 @app.callback()
-def _root(ctx: typer.Context) -> None:
+def _root(ctx: typer.Context) -> None:  # pyright: ignore[reportUnusedFunction]
     """If no subcommand was given, launch the workbench TUI."""
     if ctx.invoked_subcommand is not None:
         return

@@ -617,7 +617,7 @@ def _install_auth_middleware(
     """
 
     @app.middleware("http")
-    async def _auth_middleware(request: fastapi.Request, call_next: Any) -> Any:
+    async def _auth_middleware(request: fastapi.Request, call_next: Any) -> Any:  # pyright: ignore[reportUnusedFunction]
         if request.url.path in _AUTH_EXEMPT_PATHS:
             return await call_next(request)
 
@@ -676,8 +676,8 @@ def create_app(
     # if connect fails, so the server doesn't crash on a missing device.
     if ble_client is not None:
 
-        @app.on_event("startup")
-        async def _auto_connect() -> None:
+        @app.on_event("startup")  # pyright: ignore[reportDeprecated]
+        async def _auto_connect() -> None:  # pyright: ignore[reportUnusedFunction]
             import asyncio
 
             try:

@@ -15,7 +15,7 @@ import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from ._data_dirs import runs_dir
 from ._slugs import slug_for
@@ -47,7 +47,7 @@ class SessionLogger:
             }
         )
 
-    def _write(self, entry: dict) -> None:
+    def _write(self, entry: dict[str, Any]) -> None:
         if self._fp is None:
             raise RuntimeError("SessionLogger is closed")
         entry["_ts"] = datetime.now(tz=UTC).isoformat()
@@ -56,8 +56,8 @@ class SessionLogger:
         self._fp.write(json.dumps(entry, default=str) + "\n")
         self._fp.flush()
 
-    def event(self, event_type: str, data: dict | None = None) -> None:
-        entry: dict = {"type": "event", "event": event_type}
+    def event(self, event_type: str, data: dict[str, Any] | None = None) -> None:
+        entry: dict[str, Any] = {"type": "event", "event": event_type}
         if data:
             entry["data"] = data
         self._write(entry)

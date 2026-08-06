@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import UTC, datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -38,7 +38,7 @@ from .widgets.status_pane import StatusPane
 from .widgets.temp_chart import TempChart
 
 
-class BentoLabApp(App):
+class BentoLabApp(App[Any]):
     """Bento Lab workbench."""
 
     CSS_PATH = "style.tcss"

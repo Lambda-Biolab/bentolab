@@ -1,5 +1,8 @@
 """Tests for BentoLabBLE client with mocked BLE."""
 
+from __future__ import annotations
+
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -42,14 +45,14 @@ def test_construction_with_name_filter():
     assert lab.name_filter.pattern == "MyDevice"
 
 
-def test_not_connected_by_default(lab):
+def test_not_connected_by_default(lab: BentoLabBLE):
     assert not lab.is_connected
 
 
 # --- Connection tests ---
 
 
-def test_require_client_raises_when_not_connected(lab):
+def test_require_client_raises_when_not_connected(lab: BentoLabBLE):
     with pytest.raises(BentoLabConnectionError, match="Not connected"):
         lab._require_client()
 
@@ -105,7 +108,7 @@ def test_profile_data_defaults():
 # --- Notification handler ---
 
 
-def test_on_notify_parses_status(lab):
+def test_on_notify_parses_status(lab: BentoLabBLE):
     data = bytearray(b"bb;0;0;0;0;20;25;0")
     lab._on_notify(None, data)
     assert lab._last_status is not None
@@ -113,7 +116,7 @@ def test_on_notify_parses_status(lab):
     assert lab._last_status.lid_temperature == 25
 
 
-def test_on_notify_calls_status_callbacks(lab):
+def test_on_notify_calls_status_callbacks(lab: BentoLabBLE):
     called = []
     lab.on_status(lambda s: called.append(s))
     lab._on_notify(None, bytearray(b"bb;1;0;0;0;95;110;0"))
@@ -122,18 +125,18 @@ def test_on_notify_calls_status_callbacks(lab):
     assert called[0].block_temperature == 95
 
 
-def test_on_notify_buffers_non_status(lab):
+def test_on_notify_buffers_non_status(lab: BentoLabBLE):
     lab._on_notify(None, bytearray(b"q;0;5;;;"))
     assert len(lab._rx_buffer) == 1
     assert lab._rx_buffer[0]["type"] == "profile_count"
 
 
-def test_on_notify_ignores_continuation(lab):
+def test_on_notify_ignores_continuation(lab: BentoLabBLE):
     lab._on_notify(None, bytearray(b";;;"))
     assert len(lab._rx_buffer) == 0
 
 
-def test_on_notify_handles_bad_data(lab):
+def test_on_notify_handles_bad_data(lab: BentoLabBLE):
     # Should not raise
     lab._on_notify(None, bytearray(b"\xff\xfe\xfd"))
     assert lab._last_status is None
@@ -142,7 +145,7 @@ def test_on_notify_handles_bad_data(lab):
 # --- Disconnect callback ---
 
 
-def test_on_disconnect_callback(lab):
+def test_on_disconnect_callback(lab: BentoLabBLE):
     called = []
     lab.on_disconnect(lambda: called.append(True))
     lab._on_disconnect(None)
@@ -153,7 +156,9 @@ def test_on_disconnect_callback(lab):
 # --- auto-reconnect behavior (issue #55 mitigation) ---
 
 
-async def test_on_disconnect_schedules_background_reconnect(lab, monkeypatch):
+async def test_on_disconnect_schedules_background_reconnect(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """An unexpected disconnect starts the background reconnect loop.
 
     Regression for the Bento Lab firmware's hard ~90s connection
@@ -173,7 +178,7 @@ async def test_on_disconnect_schedules_background_reconnect(lab, monkeypatch):
 
     # Prevent the actual connect() from doing anything; we only
     # assert that the task was scheduled.
-    async def fake_connect(_address):
+    async def fake_connect(_address: str):
         return None
 
     monkeypatch.setattr(lab, "connect", fake_connect)
@@ -192,7 +197,9 @@ async def test_on_disconnect_schedules_background_reconnect(lab, monkeypatch):
         await task
 
 
-async def test_background_reconnect_fires_callback_on_success(lab, monkeypatch):
+async def test_background_reconnect_fires_callback_on_success(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """Successful reconnect invokes the registered reconnect callback.
 
     The callback is what app.py wires to the SSE EventBroker so live
@@ -203,13 +210,13 @@ async def test_background_reconnect_fires_callback_on_success(lab, monkeypatch):
     lab.on_reconnect(lambda: called.append("reconnected"))
     lab._connected_address = "AA:BB:CC:DD:EE:FF"
 
-    async def fake_connect(_address):
+    async def fake_connect(_address: str):
         return None
 
     monkeypatch.setattr(lab, "connect", fake_connect)
 
     # Skip the backoff sleep.
-    async def no_sleep(_s):
+    async def no_sleep(_s: str):
         return None
 
     monkeypatch.setattr("bentolab.ble_client.asyncio.sleep", no_sleep)
@@ -218,7 +225,9 @@ async def test_background_reconnect_fires_callback_on_success(lab, monkeypatch):
     assert called == ["reconnected"]
 
 
-async def test_background_reconnect_gives_up_after_max_attempts(lab, monkeypatch):
+async def test_background_reconnect_gives_up_after_max_attempts(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """When connect() never succeeds, the loop gives up cleanly."""
     called = []
     lab.on_reconnect(lambda: called.append("reconnected"))
@@ -226,13 +235,13 @@ async def test_background_reconnect_gives_up_after_max_attempts(lab, monkeypatch
 
     attempts = []
 
-    async def failing_connect(_address):
+    async def failing_connect(_address: str):
         attempts.append(1)
         raise Exception("nope")
 
     monkeypatch.setattr(lab, "connect", failing_connect)
 
-    async def no_sleep(_s):
+    async def no_sleep(_s: str):
         return None
 
     monkeypatch.setattr("bentolab.ble_client.asyncio.sleep", no_sleep)
@@ -242,7 +251,7 @@ async def test_background_reconnect_gives_up_after_max_attempts(lab, monkeypatch
     assert len(attempts) == 10  # max_attempts
 
 
-async def test_disconnect_cancels_in_flight_reconnect(lab):
+async def test_disconnect_cancels_in_flight_reconnect(lab: BentoLabBLE):
     """Operator-initiated disconnect stops the auto-reconnect loop.
 
     After ``disconnect()`` returns, ``_reconnect_task`` is None and
@@ -268,7 +277,7 @@ async def test_disconnect_cancels_in_flight_reconnect(lab):
 # --- run_profile convenience wrapper ---
 
 
-async def test_run_profile_flattens_and_forwards(lab):
+async def test_run_profile_flattens_and_forwards(lab: BentoLabBLE):
     profile = PCRProfile.simple(
         name="Unit Test PCR",
         num_cycles=12,
@@ -279,9 +288,9 @@ async def test_run_profile_flattens_and_forwards(lab):
         final_extension=(72.0, 180),
     )
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    async def fake_run_pcr(**kwargs):
+    async def fake_run_pcr(**kwargs: Any):
         captured.update(kwargs)
         yield RunState(
             state=RunLifecycle.IDLE,
@@ -311,7 +320,9 @@ async def test_run_profile_flattens_and_forwards(lab):
 # --- public start_run(profile) adapter (matches BleClientProtocol) ---
 
 
-async def test_start_run_adapter_flattens_profile_and_forwards(lab, monkeypatch):
+async def test_start_run_adapter_flattens_profile_and_forwards(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """start_run(profile) delegates to _start_pcr_program with flattened args.
 
     Regression: the BleClientProtocol contract in api/app.py declares
@@ -330,9 +341,9 @@ async def test_start_run_adapter_flattens_profile_and_forwards(lab, monkeypatch)
         final_extension=(72.0, 120),
     )
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    async def fake_start_program(**kwargs):
+    async def fake_start_program(**kwargs: Any):
         captured.update(kwargs)
 
     monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
@@ -353,13 +364,15 @@ async def test_start_run_adapter_flattens_profile_and_forwards(lab, monkeypatch)
     assert captured["slot"] == 0
 
 
-async def test_start_run_adapter_accepts_lid_temp_override(lab, monkeypatch):
+async def test_start_run_adapter_accepts_lid_temp_override(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """start_run(profile, lid_temp=X) overrides the profile default."""
     profile = PCRProfile.simple(name="Lid Override", num_cycles=3)
 
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    async def fake_start_program(**kwargs):
+    async def fake_start_program(**kwargs: Any):
         captured.update(kwargs)
 
     monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
@@ -368,7 +381,7 @@ async def test_start_run_adapter_accepts_lid_temp_override(lab, monkeypatch):
     assert captured["lid_temp"] == 95.0  # override applied
 
 
-async def test_abort_run_delegates_to_stop_run(lab, monkeypatch):
+async def test_abort_run_delegates_to_stop_run(lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch):
     """abort_run() is the public API name; stop_run() is the wire-level one."""
     called = {"stop": False}
 
@@ -380,7 +393,9 @@ async def test_abort_run_delegates_to_stop_run(lab, monkeypatch):
     assert called["stop"] is True
 
 
-async def test_get_run_status_combines_poll_and_status(lab, monkeypatch):
+async def test_get_run_status_combines_poll_and_status(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """get_run_status returns a typed RunState combining poll + status."""
     monkeypatch.setattr(
         lab,
@@ -420,7 +435,7 @@ def _patch_run_pcr_dependencies(
 ) -> list[RunState]:
     """Wire up _start_pcr_program/get_status/poll_run_status/sleep for run_pcr tests."""
 
-    async def fake_start_program(**_kwargs):
+    async def fake_start_program(**_kwargs: Any):
         return None
 
     async def fake_get_status():
@@ -434,7 +449,7 @@ def _patch_run_pcr_dependencies(
         except StopIteration:
             return RunStatus(running=False, checksum=0, progress=100)
 
-    async def fake_sleep(_seconds):
+    async def fake_sleep(_seconds: float):
         return None
 
     monkeypatch.setattr(lab, "_start_pcr_program", fake_start_program)
@@ -444,7 +459,9 @@ def _patch_run_pcr_dependencies(
     return []
 
 
-async def test_run_pcr_ignores_transient_not_running_during_grace(lab, monkeypatch):
+async def test_run_pcr_ignores_transient_not_running_during_grace(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """A single early running=False (lid-heat ramp) must not end the run."""
     run_status_seq = [
         RunStatus(running=True, checksum=0, progress=10),
@@ -473,7 +490,7 @@ async def test_run_pcr_ignores_transient_not_running_during_grace(lab, monkeypat
     assert not states[-1].running
 
 
-async def test_run_pcr_completes_on_progress_99(lab, monkeypatch):
+async def test_run_pcr_completes_on_progress_99(lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch):
     """Reaching peak progress >=99% terminates immediately on next idle."""
     run_status_seq = [
         RunStatus(running=True, checksum=0, progress=50),
@@ -495,7 +512,9 @@ async def test_run_pcr_completes_on_progress_99(lab, monkeypatch):
     assert states[-1].progress == 100
 
 
-async def test_run_pcr_requires_consecutive_idle_after_grace(lab, monkeypatch):
+async def test_run_pcr_requires_consecutive_idle_after_grace(
+    lab: BentoLabBLE, monkeypatch: pytest.MonkeyPatch
+):
     """After grace, N consecutive idle polls (without progress=99) terminate."""
     run_status_seq = [
         RunStatus(running=True, checksum=0, progress=20),

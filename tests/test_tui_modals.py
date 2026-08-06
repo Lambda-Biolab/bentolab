@@ -7,6 +7,7 @@ covers the bulk of slice 7's behavior.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,7 +52,7 @@ async def test_splash_pushed_in_live_app_becomes_active_screen() -> None:
     """Pushing ``SplashModal`` mounts it as the active screen."""
     from textual.app import App
 
-    class _Host(App):
+    class _Host(App[Any]):
         pass
 
     app = _Host()
@@ -68,7 +69,7 @@ async def test_confirm_run_compose_yields_profile_and_runtime() -> None:
 
     profile = PCRProfile.simple(num_cycles=20)
 
-    class _Host(App):
+    class _Host(App[Any]):
         def compose(self) -> ComposeResult:
             yield ConfirmRunModal(profile=profile, address="AA:BB:CC:DD:EE:FF")
 
@@ -92,7 +93,7 @@ async def test_confirm_quit_compose_yields_three_buttons() -> None:
     from textual.app import App, ComposeResult
     from textual.widgets import Button
 
-    class _Host(App):
+    class _Host(App[Any]):
         def compose(self) -> ComposeResult:
             yield ConfirmQuitModal(profile_name="demo", progress=42)
 
@@ -156,7 +157,7 @@ async def test_scan_modal_pushed_and_cancel_dismiss() -> None:
     """
     from textual.app import App
 
-    class _Host(App):
+    class _Host(App[Any]):
         pass
 
     app = _Host()
@@ -182,7 +183,7 @@ async def test_scan_modal_with_devices_picks_and_remembers() -> None:
     """
     from textual.app import App
 
-    class _Host(App):
+    class _Host(App[Any]):
         pass
 
     app = _Host()
@@ -207,7 +208,7 @@ async def test_scan_modal_cancel_dispatch_dismisses() -> None:
     """Pressing Cancel dismisses with ``None``."""
     from textual.app import App
 
-    class _Host(App):
+    class _Host(App[Any]):
         pass
 
     app = _Host()

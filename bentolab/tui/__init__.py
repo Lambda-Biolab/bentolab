@@ -21,7 +21,7 @@ Public entry point: :func:`run`. Submodules:
 
 from __future__ import annotations
 
-__all__ = ["BentoLabApp", "run"]
+__all__ = ["BentoLabApp", "run"]  # pyright: ignore[reportUnsupportedDunderAll]
 
 
 def __getattr__(name: str) -> object:
