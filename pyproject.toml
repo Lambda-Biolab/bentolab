@@ -16,7 +16,7 @@ dependencies = [
 [project.optional-dependencies]
 api = [
     "fastapi>=0.141.1",
-    "uvicorn[standard]>=0.52.0",
+    "uvicorn[standard]>=0.52.1",
 ]
 tools = [
     "construct>=2.10.0",
@@ -40,7 +40,7 @@ bentolab = "bentolab.cli.main:main"
 [dependency-groups]
 dev = [
     "fastapi>=0.141.1",
-    "uvicorn[standard]>=0.52.0",
+    "uvicorn[standard]>=0.52.1",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "textual>=0.79",
