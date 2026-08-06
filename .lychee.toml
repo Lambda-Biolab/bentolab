@@ -15,4 +15,6 @@ exclude = [
     "^https://en\\.wikipedia\\.org",
     "^https://hub\\.docker\\.com",
     "^https://pypi\\.org",
+    # EU EUR-Lex returns 202 Accepted for HEAD requests (the URL is real, but lychee rejects 202).
+    "^https://eur-lex\\.europa\\.eu",
 ]
