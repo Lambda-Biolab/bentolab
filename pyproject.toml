@@ -138,7 +138,7 @@ reportPrivateUsage = false
 reportUnknownLambdaType = false
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
